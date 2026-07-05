@@ -322,6 +322,60 @@ const COLORS = {
 };
 export default COLORS;
 
+// Curated, semantic palette for expense groups: similar categories share a hue
+// family, the big three (Childcare, Housing, Uncategorized) stay distinct, and
+// Uncategorized is a flat "sort-me" grey so unsorted spend reads as noise.
+const EXPENSE_GROUP_COLORS: Record<string, string> = {
+  // Shelter / home — blues
+  Housing: "#3d6da3",
+  Home: "#6d97c4",
+  Utilities: "#9fbdda",
+  // Family, care & health — teal → green
+  Childcare: "#2f8f7f",
+  Education: "#57ab97",
+  Health: "#82c4af",
+  Insurance: "#acd8c8",
+  // Food — warm oranges
+  Groceries: "#e08a2e",
+  Dining: "#f0ad63",
+  // Getting around — earthy
+  Transportation: "#a9856a",
+  // Discretionary — purples / magenta
+  Travel: "#b45c9e",
+  Shopping: "#8663ac",
+  Recreation: "#a68bc4",
+  Personal: "#cf8fb5",
+  Subscriptions: "#c9b2dc",
+  // Ops / fees — cool greys
+  Business: "#7d8794",
+  Fees: "#adb4bd",
+  // Not yet sorted — flat grey
+  Uncategorized: "#cdd2d8"
+};
+
+const EXPENSE_FALLBACK = ["#8dd3c7", "#bebada", "#fdb462", "#b3de69", "#bc80bd", "#ccebc5", "#ffed6f"];
+
+export function expenseColorScheme(domain: string[]) {
+  let fi = 0;
+  const range = _.map(
+    domain,
+    (d) => EXPENSE_GROUP_COLORS[d] ?? EXPENSE_FALLBACK[fi++ % EXPENSE_FALLBACK.length]
+  );
+  return d3.scaleOrdinal<string>().domain(domain).range(range);
+}
+
+// The palette's own key order is the semantic (hue-family) order.
+export const EXPENSE_GROUP_ORDER = Object.keys(EXPENSE_GROUP_COLORS);
+
+// Sort expense groups so similar colours sit together in stacks and legends.
+// Unknown groups fall to the end, alphabetically.
+export function sortExpenseGroups(groups: string[]): string[] {
+  return _.sortBy(_.sortBy(groups), (g) => {
+    const i = EXPENSE_GROUP_ORDER.indexOf(g);
+    return i === -1 ? EXPENSE_GROUP_ORDER.length : i;
+  });
+}
+
 export function generateColorScheme(domain: string[]) {
   let colors: string[];
   const n = domain.length;

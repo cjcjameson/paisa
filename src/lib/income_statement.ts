@@ -72,21 +72,21 @@ export function renderIncomeStatement(element: Element) {
 
   let firstRender = true;
   return function (statement: IncomeStatement) {
+    // Order: Income, Expenses, Gain/Loss, Equity, Liabilities, Tax.
+    // Interest is folded into Income (it is literally Income:Interest).
     const incomeStart = statement.startingBalance;
-    const income = sum(statement.income) * -1;
-    const taxStart = incomeStart + income;
-    const tax = sum(statement.tax) * -1;
-    const interestStart = taxStart + tax;
-    const interest = sum(statement.interest) * -1;
-    const pnlStart = interestStart + interest;
+    const income = (sum(statement.income) + sum(statement.interest)) * -1;
+    const expensesStart = incomeStart + income;
+    const expenses = sum(statement.expenses) * -1;
+    const pnlStart = expensesStart + expenses;
     const pnl = sum(statement.pnl);
     const equityStart = pnlStart + pnl;
     const equity = sum(statement.equity) * -1;
     const liabilitiesStart = equityStart + equity;
     const liabilities = sum(statement.liabilities) * -1;
-    const expensesStart = liabilitiesStart + liabilities;
-    const expenses = sum(statement.expenses) * -1;
-    const expensesEnd = expensesStart + expenses;
+    const taxStart = liabilitiesStart + liabilities;
+    const tax = sum(statement.tax) * -1;
+    const taxEnd = taxStart + tax;
     const t = svg.transition().duration(firstRender ? 0 : 750);
     firstRender = false;
 
@@ -97,25 +97,16 @@ export function renderIncomeStatement(element: Element) {
         end: incomeStart + income,
         color: COLORS.income,
         value: income,
-        breakdown: statement.income,
+        breakdown: { ...statement.income, ...statement.interest },
         multiplier: -1
       },
       {
-        label: "Tax",
-        start: taxStart,
-        end: taxStart + tax,
+        label: "Expenses",
+        start: expensesStart,
+        end: expensesStart + expenses,
         color: COLORS.expenses,
-        value: tax,
-        breakdown: statement.tax,
-        multiplier: -1
-      },
-      {
-        label: "Interest",
-        start: interestStart,
-        end: interestStart + interest,
-        color: COLORS.income,
-        value: interest,
-        breakdown: statement.interest,
+        value: expenses,
+        breakdown: statement.expenses,
         multiplier: -1
       },
       {
@@ -146,12 +137,12 @@ export function renderIncomeStatement(element: Element) {
         multiplier: -1
       },
       {
-        label: "Expenses",
-        start: expensesStart,
-        end: expensesStart + expenses,
+        label: "Tax",
+        start: taxStart,
+        end: taxStart + tax,
         color: COLORS.expenses,
-        value: expenses,
-        breakdown: statement.expenses,
+        value: tax,
+        breakdown: statement.tax,
         multiplier: -1
       }
     ];
@@ -166,15 +157,14 @@ export function renderIncomeStatement(element: Element) {
 
     const lines: Line[] = [
       { label: "Income", value: incomeStart, anchor: "start", icon: "fa6-solid:caret-down" },
-      { label: "Tax", value: taxStart, anchor: "end" },
-      { label: "Interest", value: interestStart, anchor: "end" },
+      { label: "Expenses", value: expensesStart, anchor: "end" },
       { label: "Gain / Loss", value: pnlStart, anchor: "end" },
       { label: "Equity", value: equityStart, anchor: "end" },
       { label: "Liabilities", value: liabilitiesStart, anchor: "end" },
-      { label: "Expenses", value: expensesStart, anchor: "end" },
+      { label: "Tax", value: taxStart, anchor: "end" },
       {
-        label: "Expenses",
-        value: expensesEnd,
+        label: "Tax",
+        value: taxEnd,
         down: true,
         anchor: "end",
         icon: "fa6-solid:caret-up"
@@ -185,13 +175,12 @@ export function renderIncomeStatement(element: Element) {
     x.domain(
       d3.extent([
         incomeStart,
-        interestStart,
-        taxStart,
+        expensesStart,
         pnlStart,
         equityStart,
         liabilitiesStart,
-        expensesStart,
-        expensesEnd
+        taxStart,
+        taxEnd
       ])
     );
 

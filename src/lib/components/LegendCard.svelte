@@ -5,6 +5,11 @@
 
   export let clazz = "";
   export let legends: Legend[];
+  export let maxVisible = Infinity;
+
+  let expanded = false;
+  $: visibleLegends = expanded ? legends : legends.slice(0, maxVisible);
+  $: hiddenCount = Math.max(0, legends.length - maxVisible);
 
   const textureScale = 14;
   const texture: Action<SVGSVGElement, { texture: any }> = (element, props) => {
@@ -41,10 +46,10 @@
   }
 </script>
 
-<div class="flex justify-start gap-0 {clazz}">
-  {#each legends as legend}
+<div class="flex flex-wrap items-center justify-start gap-x-3 gap-y-1 {clazz}">
+  {#each visibleLegends as legend}
     <div
-      class="flex flex-col p-1.5 gap-2 legend-box {legend.onClick && 'cursor-pointer'}"
+      class="flex flex-row items-center p-1 gap-1.5 legend-box {legend.onClick && 'cursor-pointer'}"
       on:click={(_e) => onClick(legend)}
       class:selected={selectedLegend == legend}
     >
@@ -72,4 +77,12 @@
       </div>
     </div>
   {/each}
+  {#if hiddenCount > 0}
+    <button
+      class="legend-more is-size-6-5 has-text-grey-light"
+      on:click={() => (expanded = !expanded)}
+    >
+      {expanded ? "show less" : `+${hiddenCount} more`}
+    </button>
+  {/if}
 </div>

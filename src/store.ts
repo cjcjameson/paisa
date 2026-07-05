@@ -57,7 +57,7 @@ export const sheetEditorState = writable(initialSheetEditorState);
 
 export const month = writable(now().format("YYYY-MM"));
 export const year = writable<string>("");
-export const dateRangeOption = writable<number>(3);
+export const dateRangeOption = writable<number>(1);
 
 export const dateMin = writable(dayjs("1980", "YYYY"));
 export const dateMax = writable(now());

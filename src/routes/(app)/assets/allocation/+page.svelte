@@ -2,14 +2,15 @@
   import {
     renderAllocation,
     renderAllocationTarget,
-    renderAllocationTimeline
+    renderAllocationTimeline,
+    renderNetworthTreemap
   } from "$lib/allocation";
   import COLORS, { generateColorScheme } from "$lib/colors";
   import BoxLabel from "$lib/components/BoxLabel.svelte";
   import LegendCard from "$lib/components/LegendCard.svelte";
   import Table from "$lib/components/Table.svelte";
   import { accountName, nonZeroCurrency } from "$lib/table_formatters";
-  import { ajax, formatPercentage, rem, type Aggregate, type Legend } from "$lib/utils";
+  import { ajax, formatPercentage, lastName, rem, type Aggregate, type Legend } from "$lib/utils";
   import _ from "lodash";
   import { onMount, tick } from "svelte";
   import type { ColumnDefinition, ProgressBarParams } from "tabulator-tables";
@@ -54,6 +55,20 @@
       aggregates_timeline: aggregatesTimeline,
       allocation_targets: allocationTargets
     } = await ajax("/api/allocation");
+
+    // Net worth = assets net of matching mortgages. Subtract each
+    // Liabilities:Mortgages:<Property> from Assets:RealEstate:<Property> so the
+    // treemap shows house EQUITY. Display-only; the ledger is untouched.
+    const { liability_breakdowns: liabilities } = await ajax("/api/liabilities/balance");
+    const netAggregates: Record<string, Aggregate> = _.cloneDeep(aggregates);
+    _.each(liabilities, (l: any, account: string) => {
+      if (!account.startsWith("Liabilities:Mortgages:")) return;
+      const property = `Assets:RealEstate:${lastName(account)}`;
+      if (netAggregates[property]) {
+        netAggregates[property].market_amount -= Math.abs(l.balance_amount);
+      }
+    });
+
     const accounts = _.keys(aggregates);
     aggregateLeafNodes = _.filter(_.values(aggregates), (a) => a.market_amount > 0);
     total = _.sumBy(aggregateLeafNodes, (a) => a.market_amount);
@@ -71,12 +86,23 @@
     }
     await tick();
 
+    renderNetworthTreemap(netAggregates, color);
     renderAllocationTarget(allocationTargets, color);
     renderAllocation(aggregates, color);
     allocationTimelineLegends = renderAllocationTimeline(aggregatesTimeline);
   });
 </script>
 
+<section class="section tab-allocation">
+  <div class="container is-fluid">
+    <div class="columns">
+      <div class="column is-12 has-text-centered">
+        <div id="d3-networth-treemap" style="width: 100%; height: 420px" />
+      </div>
+    </div>
+    <BoxLabel text="Net Worth — house equity (real estate net of mortgages)" />
+  </div>
+</section>
 <section class="section tab-allocation" style={showAllocation ? "" : "display: none"}>
   <div class="container is-fluid">
     <div class="columns">

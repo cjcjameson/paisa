@@ -236,6 +236,16 @@ export function renderAllocation(
   renderPartition(document.getElementById("d3-allocation-value"), aggregates, d3.treemap(), color);
 }
 
+// Net-worth treemap: same renderer, but fed asset aggregates already netted of
+// matching mortgages (real estate shows equity, not gross value). Frontend-only —
+// the ledger keeps the property and its mortgage as separate, honest entries.
+export function renderNetworthTreemap(
+  aggregates: Record<string, Aggregate>,
+  color: d3.ScaleOrdinal<string, string>
+) {
+  renderPartition(document.getElementById("d3-networth-treemap"), aggregates, d3.treemap(), color);
+}
+
 function renderPartition(
   element: HTMLElement,
   aggregates: Record<string, Aggregate>,

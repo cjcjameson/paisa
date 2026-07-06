@@ -125,7 +125,8 @@ func computeStatement(db *gorm.DB, postings []posting.Posting) map[string]Income
 			Add(sumBalance(incomeStatement.Equity).Neg()).
 			Add(sumBalance(incomeStatement.Tax).Neg()).
 			Add(sumBalance(incomeStatement.Expenses).Neg()).
-			Add(sumBalance(incomeStatement.Pnl))
+			Add(sumBalance(incomeStatement.Pnl)).
+			Add(sumBalance(incomeStatement.Liabilities).Neg())
 
 		incomeStatement.EndingBalance = startingBalance
 

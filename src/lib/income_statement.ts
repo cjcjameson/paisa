@@ -146,17 +146,20 @@ export function renderIncomeStatement(element: Element) {
     // Checking Cash Delta calculations
     const checkingEnd = operatingEnd + vanguardWithdrawals - contributions - mortgagePaydown;
     const checkingDelta = checkingEnd - operatingStart;
-    
+
     // Reclassification offsets to bridge to net worth changes
     const reclassEnd = checkingEnd + contributions - vanguardWithdrawals + mortgagePaydown; // resolves to operatingEnd
 
     // Net Worth Delta (ending net worth matches exactly)
     const totalChange = statement.endingBalance - statement.startingBalance;
-    // junk makes the math closed-loop (equal to original junk)
+    // junk makes the math closed-loop
     const junk = totalChange - (operatingCashFlow + marketGains);
 
     const junkBreakdown: Record<string, number> = {};
     for (const [k, v] of Object.entries(statement.equity || {})) {
+      junkBreakdown[k] = -(v as number);
+    }
+    for (const [k, v] of Object.entries(statement.liabilities || {})) {
       junkBreakdown[k] = -(v as number);
     }
 
@@ -281,7 +284,7 @@ export function renderIncomeStatement(element: Element) {
         multiplier: 1
       },
       {
-        label: "Other / Junk",
+        label: "Other / Adjustments",
         start: reclassEnd + marketGains,
         end: statement.endingBalance,
         color: COLORS.neutral,
@@ -371,7 +374,7 @@ export function renderIncomeStatement(element: Element) {
           .fromPairs()
           .value();
 
-        if (d.label === "Other / Junk") {
+        if (d.label === "Other / Adjustments") {
           const rows = [];
           
           const ccVal = secondLevelBreakdown["Liabilities:CreditCards"] || 0;

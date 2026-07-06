@@ -374,6 +374,77 @@ export function renderIncomeStatement(element: Element) {
           .fromPairs()
           .value();
 
+        if (d.label === "Other / Junk") {
+          const rows = [];
+          
+          const ccVal = secondLevelBreakdown["Liabilities:CreditCards"] || 0;
+          if (ccVal !== 0) {
+            rows.push([
+              "💳 Credit Card Debt Decrease (Net Worth +)",
+              [formatCurrency(ccVal * d.multiplier), "has-text-right has-text-weight-bold"]
+            ]);
+          }
+
+          const mtgVal = secondLevelBreakdown["Liabilities:Mortgages"] || 0;
+          if (mtgVal !== 0) {
+            rows.push([
+              "🏠 Mortgage Principal Reduction (Net Worth +)",
+              [formatCurrency(mtgVal * d.multiplier), "has-text-right has-text-weight-bold"]
+            ]);
+          }
+
+          const histVal = secondLevelBreakdown["Equity:Historical"] || 0;
+          if (histVal !== 0) {
+            rows.push([
+              "🔌 Untracked Card Payments (Chase/Courtney)",
+              [formatCurrency(histVal * d.multiplier), "has-text-right has-text-weight-bold"]
+            ]);
+          }
+
+          const transfersVal = secondLevelBreakdown["Equity:Transfers"] || 0;
+          if (transfersVal !== 0) {
+            rows.push([
+              "💸 Stanford FCU (Untracked Transfer)",
+              [formatCurrency(transfersVal * d.multiplier), "has-text-right has-text-weight-bold"]
+            ]);
+          }
+
+          const openVal = secondLevelBreakdown["Equity:OpeningBalance"] || 0;
+          if (openVal !== 0) {
+            rows.push([
+              "🏁 Bilt & Robinhood (Opening Balances)",
+              [formatCurrency(openVal * d.multiplier), "has-text-right has-text-weight-bold"]
+            ]);
+          }
+
+          const marginVal = secondLevelBreakdown["Liabilities:Robinhood"] || 0;
+          if (marginVal !== 0) {
+            rows.push([
+              "📈 Robinhood Margin (Loan Increase)",
+              [formatCurrency(marginVal * d.multiplier), "has-text-right has-text-weight-bold"]
+            ]);
+          }
+
+          const handledKeys = new Set([
+            "Liabilities:CreditCards",
+            "Liabilities:Mortgages",
+            "Equity:Historical",
+            "Equity:Transfers",
+            "Equity:OpeningBalance",
+            "Liabilities:Robinhood"
+          ]);
+          for (const [k, v] of Object.entries(secondLevelBreakdown)) {
+            if (!handledKeys.has(k) && Math.abs(v) > 0.01) {
+              rows.push([
+                iconify(k),
+                [formatCurrency(v * d.multiplier), "has-text-right has-text-weight-bold"]
+              ]);
+            }
+          }
+
+          return tooltip(rows, { header: d.label, total: formatCurrency(d.value) });
+        }
+
         return tooltip(
           _.map(secondLevelBreakdown, (value, label) => [
             iconify(label),

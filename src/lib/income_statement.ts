@@ -279,7 +279,7 @@ export function renderIncomeStatement(element: Element) {
         value: marketGains,
         breakdown: {
           ...statement.pnl,
-          ..._.pickBy(statement.income, (v, k) => isDividend(k))
+          ..._.mapValues(_.pickBy(statement.income, (v, k) => isDividend(k)), (v) => -(v as number))
         },
         multiplier: 1
       },

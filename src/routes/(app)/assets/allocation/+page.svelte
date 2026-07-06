@@ -65,6 +65,8 @@
       if (!account.startsWith("Liabilities:Mortgages:")) return;
       const property = `Assets:RealEstate:${lastName(account)}`;
       if (netAggregates[property]) {
+        (netAggregates[property] as any).gross_amount = netAggregates[property].market_amount;
+        (netAggregates[property] as any).mortgage_amount = Math.abs(l.balance_amount);
         netAggregates[property].market_amount -= Math.abs(l.balance_amount);
       }
     });

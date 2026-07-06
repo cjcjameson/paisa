@@ -441,7 +441,23 @@ svg text {
   display: flex;
   justify-content: center;
   flex-direction: column;
-  flex-wrap: wrap;
+  flex-wrap: nowrap;
+  border: 2px solid var(--box-background-color, #fff);
+  border-radius: 6px;
+  padding: 6px;
+  transition: filter 0.15s ease, opacity 0.15s ease;
+  &:hover {
+    filter: brightness(0.92);
+  }
+}
+
+.node p {
+  margin: 0 !important;
+  text-align: center;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  width: 100%;
 }
 
 #d3-allocation-category,

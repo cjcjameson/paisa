@@ -288,6 +288,18 @@ function renderPartition(
     .append("div")
     .attr("class", "node")
     .attr("data-tippy-content", (d) => {
+      const data = d.data as any;
+      if (data.gross_amount !== undefined && data.mortgage_amount !== undefined) {
+        const equity = data.gross_amount - data.mortgage_amount;
+        const equityPct = ((equity / data.gross_amount) * 100).toFixed(1) + "%";
+        return tooltip([
+          ["Account", [d.id, "has-text-right"]],
+          ["Gross Property Value", [formatCurrency(data.gross_amount), "has-text-right"]],
+          ["Mortgage Debt", ["-" + formatCurrency(data.mortgage_amount), "has-text-danger has-text-right"]],
+          ["Net Equity", [formatCurrency(equity) + " (" + equityPct + ")", "has-text-weight-bold has-text-success has-text-right"]],
+          ["Percentage of Net Worth", [percent(d), "has-text-weight-bold has-text-right"]]
+        ]);
+      }
       return tooltip([
         ["Account", [d.id, "has-text-right"]],
         ["Market Value", [formatCurrency(d.value), "has-text-weight-bold has-text-right"]],
@@ -309,8 +321,35 @@ function renderPartition(
   cell
     .append("p")
     .attr("class", "heading has-text-weight-bold")
-    .style("font-size", ".5 rem")
+    .style("font-size", "0.75rem")
     .text(percent);
+
+  cell.each(function (d: any) {
+    if (d.data.gross_amount !== undefined && d.data.mortgage_amount !== undefined) {
+      const container = d3.select(this);
+      const equityPct = ((d.data.gross_amount - d.data.mortgage_amount) / d.data.gross_amount) * 100;
+      const debtPct = (d.data.mortgage_amount / d.data.gross_amount) * 100;
+      
+      const bar = container.append("div")
+        .style("width", "calc(100% - 16px)")
+        .style("margin", "6px auto 0 auto")
+        .style("height", "6px")
+        .style("background", "rgba(0,0,0,0.15)")
+        .style("border-radius", "3px")
+        .style("overflow", "hidden")
+        .style("display", "flex");
+        
+      bar.append("div")
+        .style("width", `${equityPct}%`)
+        .style("height", "100%")
+        .style("background", COLORS.gainText);
+        
+      bar.append("div")
+        .style("width", `${debtPct}%`)
+        .style("height", "100%")
+        .style("background", COLORS.lossText);
+    }
+  });
 }
 
 export function renderAllocationTimeline(

@@ -23,6 +23,7 @@ type IncomeStatement struct {
 	Interest        map[string]decimal.Decimal `json:"interest"`
 	Equity          map[string]decimal.Decimal `json:"equity"`
 	Pnl             map[string]decimal.Decimal `json:"pnl"`
+	Assets          map[string]decimal.Decimal `json:"assets"`
 	Liabilities     map[string]decimal.Decimal `json:"liabilities"`
 	Tax             map[string]decimal.Decimal `json:"tax"`
 	Expenses        map[string]decimal.Decimal `json:"expenses"`
@@ -58,6 +59,7 @@ func computeStatement(db *gorm.DB, postings []posting.Posting) map[string]Income
 		incomeStatement.Interest = make(map[string]decimal.Decimal)
 		incomeStatement.Equity = make(map[string]decimal.Decimal)
 		incomeStatement.Pnl = make(map[string]decimal.Decimal)
+		incomeStatement.Assets = make(map[string]decimal.Decimal)
 		incomeStatement.Liabilities = make(map[string]decimal.Decimal)
 		incomeStatement.Tax = make(map[string]decimal.Decimal)
 		incomeStatement.Expenses = make(map[string]decimal.Decimal)
@@ -99,6 +101,8 @@ func computeStatement(db *gorm.DB, postings []posting.Posting) map[string]Income
 				r.amount = r.amount.Add(p.Amount)
 				r.quantity[p.Commodity] = r.quantity[p.Commodity].Add(p.Quantity)
 				runnings[p.Account] = r
+
+				incomeStatement.Assets[p.Account] = incomeStatement.Assets[p.Account].Add(p.Amount)
 			default:
 				// ignore
 			}

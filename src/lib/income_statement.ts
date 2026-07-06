@@ -13,11 +13,11 @@ import { iconGlyph, iconify } from "./icon";
 import { pathArrows } from "d3-path-arrows";
 
 export function renderIncomeStatement(element: Element) {
-  const BARS = 4;
-  const BAR_HEIGHT = 100;
+  const BARS = 14;
+  const BAR_HEIGHT = 45;
 
   const svg = d3.select(element),
-    margin = { top: rem(20), right: rem(20), bottom: rem(10), left: rem(110) },
+    margin = { top: rem(20), right: rem(20), bottom: rem(10), left: rem(230) },
     width = Math.max(element.parentElement.clientWidth, 600) - margin.left - margin.right,
     g = svg.append("g").attr("transform", "translate(" + margin.left + "," + margin.top + ")");
 
@@ -72,78 +72,216 @@ export function renderIncomeStatement(element: Element) {
 
   let firstRender = true;
   return function (statement: IncomeStatement) {
-    // Order: Income, Expenses, Gain/Loss, Equity, Liabilities, Tax.
-    // Interest is folded into Income (it is literally Income:Interest).
-    const incomeStart = statement.startingBalance;
-    const income = (sum(statement.income) + sum(statement.interest)) * -1;
-    const expensesStart = incomeStart + income;
-    const expenses = sum(statement.expenses) * -1;
-    const pnlStart = expensesStart + expenses;
-    const pnl = sum(statement.pnl);
-    const equityStart = pnlStart + pnl;
-    const equity = sum(statement.equity) * -1;
-    const liabilitiesStart = equityStart + equity;
-    const liabilities = sum(statement.liabilities) * -1;
-    const taxStart = liabilitiesStart + liabilities;
-    const tax = sum(statement.tax) * -1;
-    const taxEnd = taxStart + tax;
+    // Helper to sum properties matching a filter/regex
+    const sumMatching = (obj: Record<string, number>, filter: (k: string) => boolean) => {
+      let total = 0;
+      for (const [k, v] of Object.entries(obj || {})) {
+        if (filter(k)) total += v;
+      }
+      return total;
+    };
+    const sumAll = (obj: Record<string, number>) => Object.values(obj || {}).reduce((a, b) => a + b, 0);
+
+    // 1. Rental & Investment Exclusions
+    const isRentalIncome = (acct: string) => acct.toLowerCase().startsWith("income:rental");
+    const isDividend = (acct: string) => acct.toLowerCase().startsWith("income:dividends");
+    const isRentalExpense = (acct: string) => acct.toLowerCase().startsWith("expenses:rental") || acct === "Expenses:Housing:Mortgage";
+
+    // Keep all intermediate amounts as POSITIVE numbers:
+    const grossRental = Math.abs(sumMatching(statement.income, isRentalIncome));
+    const rentalExpenses = Math.abs(sumMatching(statement.expenses, isRentalExpense));
+    const netRental = grossRental - rentalExpenses; // Positive if income > expenses, negative if expenses > income
+
+    // Operating Income (excluding rental and dividends)
+    const isOperatingIncome = (acct: string) => !isRentalIncome(acct) && !isDividend(acct);
+    const operatingIncome = Math.abs(sumMatching(statement.income, isOperatingIncome) + sumMatching(statement.interest, isOperatingIncome));
+
+    // Operating Expenses (excluding rental expenses and mortgage interest, but including taxes)
+    const isOperatingExpense = (acct: string) => !isRentalExpense(acct);
+    const operatingExpenses = Math.abs(sumMatching(statement.expenses, isOperatingExpense)) + Math.abs(sumAll(statement.tax));
+
+    // Operating cash flows
+    const operatingStart = statement.startingBalance;
+    const operatingEnd = operatingStart + operatingIncome - operatingExpenses + netRental;
+    const operatingCashFlow = operatingIncome - operatingExpenses + netRental;
+
+    // Market Gains & Dividends
+    const dividendIncome = Math.abs(sumMatching(statement.income, isDividend));
+    const pnl = sumAll(statement.pnl);
+    const marketGains = pnl + dividendIncome;
+
+    // Retirement / Investment Contributions (cash outflow from checking)
+    const isChecking = (acct: string) => acct.toLowerCase().startsWith("assets:checking");
+
+    const assetsMap = (statement as any).assets || {};
+
+    let vanguardWithdrawals = 0;
+    let contributions = 0;
+    for (const [acct, val] of Object.entries(assetsMap)) {
+      if (!isChecking(acct)) {
+        if (val < 0) {
+          vanguardWithdrawals += Math.abs(val);
+        } else {
+          contributions += val;
+        }
+      }
+    }
+
+    // Mortgage Principal Paydown
+    const isMortgageAccount = (acct: string) => acct.toLowerCase().startsWith("liabilities:mortgages:");
+    const mortgagePaydown = Math.abs(sumMatching(statement.liabilities, isMortgageAccount));
+
+    // Checking Cash Delta calculations
+    const checkingEnd = operatingEnd + vanguardWithdrawals - contributions - mortgagePaydown;
+    const checkingDelta = checkingEnd - operatingStart;
+    
+    // Reclassification offsets to bridge to net worth changes
+    const reclassEnd = checkingEnd + contributions - vanguardWithdrawals + mortgagePaydown; // resolves to operatingEnd
+
+    // Net Worth Delta (ending net worth matches exactly)
+    const totalChange = statement.endingBalance - statement.startingBalance;
+    // junk makes the math closed-loop (equal to original junk)
+    const junk = totalChange - (operatingCashFlow + marketGains);
+
     const t = svg.transition().duration(firstRender ? 0 : 750);
     firstRender = false;
 
+    // Build the 14 waterfall bars
     const bars: Bar[] = [
       {
-        label: "Income",
-        start: incomeStart,
-        end: incomeStart + income,
+        label: "Income (Operating)",
+        start: operatingStart,
+        end: operatingStart + operatingIncome,
         color: COLORS.income,
-        value: income,
-        breakdown: { ...statement.income, ...statement.interest },
+        value: operatingIncome,
+        breakdown: _.omitBy({ ...statement.income, ...statement.interest }, (v, k) => !isOperatingIncome(k)),
         multiplier: -1
       },
       {
-        label: "Expenses",
-        start: expensesStart,
-        end: expensesStart + expenses,
+        label: "Expenses (Operating)",
+        start: operatingStart + operatingIncome,
+        end: operatingStart + operatingIncome - operatingExpenses,
         color: COLORS.expenses,
-        value: expenses,
-        breakdown: statement.expenses,
+        value: -operatingExpenses,
+        breakdown: _.omitBy({ ...statement.expenses, ...statement.tax }, (v, k) => !isOperatingExpense(k)),
         multiplier: -1
       },
       {
-        label: "Gain / Loss",
-        start: pnlStart,
-        end: pnlStart + pnl,
-        color: pnl > 0 ? COLORS.gain : COLORS.loss,
-        value: pnl,
-        breakdown: statement.pnl,
+        label: "Rental Income (Net)",
+        start: operatingStart + operatingIncome - operatingExpenses,
+        end: operatingEnd,
+        color: COLORS.primary,
+        value: netRental,
+        breakdown: {
+          ..._.pickBy(statement.income, (v, k) => isRentalIncome(k)),
+          ..._.pickBy(statement.expenses, (v, k) => isRentalExpense(k))
+        },
+        multiplier: -1
+      },
+      {
+        label: "🏁 Operating Cash Flow",
+        start: operatingStart,
+        end: operatingEnd,
+        color: COLORS.secondary,
+        value: operatingCashFlow,
+        breakdown: {},
         multiplier: 1
       },
       {
-        label: "Equity",
-        start: equityStart,
-        end: equityStart + equity,
-        color: COLORS.equity,
-        value: equity,
-        breakdown: statement.equity,
+        label: "Vanguard & Investment Sales",
+        start: operatingEnd,
+        end: operatingEnd + vanguardWithdrawals,
+        color: COLORS.income,
+        value: vanguardWithdrawals,
+        breakdown: _.pickBy(assetsMap, (v, k) => !isChecking(k) && v < 0),
         multiplier: -1
       },
       {
-        label: "Liabilities",
-        start: liabilitiesStart,
-        end: liabilitiesStart + liabilities,
-        color: COLORS.liabilities,
-        value: liabilities,
-        breakdown: statement.liabilities,
-        multiplier: -1
-      },
-      {
-        label: "Tax",
-        start: taxStart,
-        end: taxStart + tax,
+        label: "Retirement & Investment Savings",
+        start: operatingEnd + vanguardWithdrawals,
+        end: operatingEnd + vanguardWithdrawals - contributions,
         color: COLORS.expenses,
-        value: tax,
-        breakdown: statement.tax,
+        value: -contributions,
+        breakdown: _.pickBy(assetsMap, (v, k) => !isChecking(k) && v > 0),
+        multiplier: 1
+      },
+      {
+        label: "Mortgage Principal Paydown",
+        start: operatingEnd + vanguardWithdrawals - contributions,
+        end: checkingEnd,
+        color: COLORS.liabilities,
+        value: -mortgagePaydown,
+        breakdown: _.pickBy(statement.liabilities, (v, k) => isMortgageAccount(k)),
         multiplier: -1
+      },
+      {
+        label: "🏁 Checking Cash Delta",
+        start: operatingStart,
+        end: checkingEnd,
+        color: COLORS.assets,
+        value: checkingDelta,
+        breakdown: {},
+        multiplier: 1
+      },
+      // --- Wealth Reclassifications (Resolves the Cash Flow vs Net Worth Paradox) ---
+      {
+        label: "Mortgage Paydown (Debt Decrease)",
+        start: checkingEnd,
+        end: checkingEnd + mortgagePaydown,
+        color: COLORS.gain,
+        value: mortgagePaydown,
+        breakdown: _.pickBy(statement.liabilities, (v, k) => isMortgageAccount(k)),
+        multiplier: -1
+      },
+      {
+        label: "Retirement Savings (Asset Increase)",
+        start: checkingEnd + mortgagePaydown,
+        end: checkingEnd + mortgagePaydown + contributions,
+        color: COLORS.gain,
+        value: contributions,
+        breakdown: _.pickBy(assetsMap, (v, k) => !isChecking(k) && v > 0),
+        multiplier: 1
+      },
+      {
+        label: "Vanguard Withdrawals (Asset Decrease)",
+        start: checkingEnd + mortgagePaydown + contributions,
+        end: reclassEnd,
+        color: COLORS.loss,
+        value: -vanguardWithdrawals,
+        breakdown: _.pickBy(assetsMap, (v, k) => !isChecking(k) && v < 0),
+        multiplier: 1
+      },
+      {
+        label: "Market Gains & Growth",
+        start: reclassEnd,
+        end: reclassEnd + marketGains,
+        color: marketGains > 0 ? COLORS.gain : COLORS.loss,
+        value: marketGains,
+        breakdown: {
+          ...statement.pnl,
+          ..._.pickBy(statement.income, (v, k) => isDividend(k))
+        },
+        multiplier: 1
+      },
+      {
+        label: "Other / Junk",
+        start: reclassEnd + marketGains,
+        end: statement.endingBalance,
+        color: COLORS.neutral,
+        value: junk,
+        breakdown: {
+          "Unreconciled Transfers & CC Debt": junk
+        },
+        multiplier: 1
+      },
+      {
+        label: "🏁 Net Worth Delta",
+        start: operatingStart,
+        end: statement.endingBalance,
+        color: COLORS.success,
+        value: totalChange,
+        breakdown: {},
+        multiplier: 1
       }
     ];
 
@@ -156,15 +294,21 @@ export function renderIncomeStatement(element: Element) {
     }
 
     const lines: Line[] = [
-      { label: "Income", value: incomeStart, anchor: "start", icon: "fa6-solid:caret-down" },
-      { label: "Expenses", value: expensesStart, anchor: "end" },
-      { label: "Gain / Loss", value: pnlStart, anchor: "end" },
-      { label: "Equity", value: equityStart, anchor: "end" },
-      { label: "Liabilities", value: liabilitiesStart, anchor: "end" },
-      { label: "Tax", value: taxStart, anchor: "end" },
+      { label: "Income (Operating)", value: operatingStart, anchor: "start", icon: "fa6-solid:caret-down" },
+      { label: "Expenses (Operating)", value: operatingStart + operatingIncome, anchor: "end" },
+      { label: "Rental Income (Net)", value: operatingStart + operatingIncome - operatingExpenses, anchor: "end" },
+      { label: "🏁 Operating Cash Flow", value: operatingEnd, anchor: "end" },
+      { label: "Vanguard & Investment Sales", value: operatingEnd, anchor: "end" },
+      { label: "Retirement & Investment Savings", value: operatingEnd + vanguardWithdrawals, anchor: "end" },
+      { label: "Mortgage Principal Paydown", value: operatingEnd + vanguardWithdrawals - contributions, anchor: "end" },
+      { label: "🏁 Checking Cash Delta", value: checkingEnd, anchor: "end" },
+      { label: "Mortgage Paydown (Debt Decrease)", value: checkingEnd, anchor: "end" },
+      { label: "Retirement Savings (Asset Increase)", value: checkingEnd + mortgagePaydown, anchor: "end" },
+      { label: "Vanguard Withdrawals (Asset Decrease)", value: checkingEnd + mortgagePaydown + contributions, anchor: "end" },
+      { label: "Market Gains & Growth", value: reclassEnd, anchor: "end" },
       {
-        label: "Tax",
-        value: taxEnd,
+        label: "🏁 Net Worth Delta",
+        value: statement.endingBalance,
         down: true,
         anchor: "end",
         icon: "fa6-solid:caret-up"
@@ -174,13 +318,18 @@ export function renderIncomeStatement(element: Element) {
     y.domain(bars.map((d) => d.label).reverse());
     x.domain(
       d3.extent([
-        incomeStart,
-        expensesStart,
-        pnlStart,
-        equityStart,
-        liabilitiesStart,
-        taxStart,
-        taxEnd
+        operatingStart,
+        operatingStart + operatingIncome,
+        operatingStart + operatingIncome - operatingExpenses,
+        operatingEnd,
+        operatingEnd + vanguardWithdrawals,
+        operatingEnd + vanguardWithdrawals - contributions,
+        checkingEnd,
+        checkingEnd + mortgagePaydown,
+        checkingEnd + mortgagePaydown + contributions,
+        reclassEnd,
+        reclassEnd + marketGains,
+        statement.endingBalance
       ])
     );
 

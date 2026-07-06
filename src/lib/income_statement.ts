@@ -124,7 +124,7 @@ export function renderIncomeStatement(element: Element) {
       if (isChecking(k)) liquidBreakdown[k] = v as number;
     }
     for (const [k, v] of Object.entries(statement.liabilities)) {
-      if (isCreditCard(k)) liquidBreakdown[k] = -(v as number);
+      if (isCreditCard(k)) liquidBreakdown[k] = v as number;
     }
 
     let vanguardWithdrawals = 0;
@@ -154,6 +154,14 @@ export function renderIncomeStatement(element: Element) {
     const totalChange = statement.endingBalance - statement.startingBalance;
     // junk makes the math closed-loop (equal to original junk)
     const junk = totalChange - (operatingCashFlow + marketGains);
+
+    const junkBreakdown: Record<string, number> = {};
+    for (const [k, v] of Object.entries(statement.equity || {})) {
+      junkBreakdown[k] = -(v as number);
+    }
+    for (const [k, v] of Object.entries(statement.liabilities || {})) {
+      junkBreakdown[k] = -(v as number);
+    }
 
     const t = svg.transition().duration(firstRender ? 0 : 750);
     firstRender = false;
@@ -281,9 +289,7 @@ export function renderIncomeStatement(element: Element) {
         end: statement.endingBalance,
         color: COLORS.neutral,
         value: junk,
-        breakdown: {
-          "Unreconciled Transfers & CC Debt": junk
-        },
+        breakdown: junkBreakdown,
         multiplier: 1
       },
       {

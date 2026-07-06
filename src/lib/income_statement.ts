@@ -112,8 +112,20 @@ export function renderIncomeStatement(element: Element) {
 
     // Retirement / Investment Contributions (cash outflow from checking)
     const isChecking = (acct: string) => acct.toLowerCase().startsWith("assets:checking");
+    const isCreditCard = (acct: string) => {
+      const lower = acct.toLowerCase();
+      return lower.startsWith("liabilities:creditcards") || lower.startsWith("liabilities:credit_cards") || lower.startsWith("liabilities:courtney:businesscard");
+    };
 
     const assetsMap = (statement as any).assets || {};
+
+    const liquidBreakdown: Record<string, number> = {};
+    for (const [k, v] of Object.entries(assetsMap)) {
+      if (isChecking(k)) liquidBreakdown[k] = v as number;
+    }
+    for (const [k, v] of Object.entries(statement.liabilities)) {
+      if (isCreditCard(k)) liquidBreakdown[k] = -(v as number);
+    }
 
     let vanguardWithdrawals = 0;
     let contributions = 0;
@@ -215,12 +227,12 @@ export function renderIncomeStatement(element: Element) {
         multiplier: -1
       },
       {
-        label: "🏁 Checking Cash Delta",
+        label: "🏁 Checking & Card Float Delta",
         start: operatingStart,
         end: checkingEnd,
         color: COLORS.assets,
         value: checkingDelta,
-        breakdown: {},
+        breakdown: liquidBreakdown,
         multiplier: 1
       },
       // --- Wealth Reclassifications (Resolves the Cash Flow vs Net Worth Paradox) ---
@@ -301,7 +313,7 @@ export function renderIncomeStatement(element: Element) {
       { label: "Vanguard & Investment Sales", value: operatingEnd, anchor: "end" },
       { label: "Retirement & Investment Savings", value: operatingEnd + vanguardWithdrawals, anchor: "end" },
       { label: "Mortgage Principal Paydown", value: operatingEnd + vanguardWithdrawals - contributions, anchor: "end" },
-      { label: "🏁 Checking Cash Delta", value: checkingEnd, anchor: "end" },
+      { label: "🏁 Checking & Card Float Delta", value: checkingEnd, anchor: "end" },
       { label: "Mortgage Paydown (Debt Decrease)", value: checkingEnd, anchor: "end" },
       { label: "Retirement Savings (Asset Increase)", value: checkingEnd + mortgagePaydown, anchor: "end" },
       { label: "Vanguard Withdrawals (Asset Decrease)", value: checkingEnd + mortgagePaydown + contributions, anchor: "end" },

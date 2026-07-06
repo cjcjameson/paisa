@@ -159,9 +159,6 @@ export function renderIncomeStatement(element: Element) {
     for (const [k, v] of Object.entries(statement.equity || {})) {
       junkBreakdown[k] = -(v as number);
     }
-    for (const [k, v] of Object.entries(statement.liabilities || {})) {
-      junkBreakdown[k] = -(v as number);
-    }
 
     const t = svg.transition().duration(firstRender ? 0 : 750);
     firstRender = false;

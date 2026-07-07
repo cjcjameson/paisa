@@ -266,6 +266,11 @@ function renderPartition(
     return formatFloat((d.value / root.value) * 100) + "%";
   };
 
+  // Color tiles by their top-level class (Assets:Investments, Assets:Checking,
+  // Assets:RealEstate, ...) so proportions are scannable, instead of a random
+  // color per leaf.
+  const groupKey = (id: string) => id.split(":").slice(0, 2).join(":");
+
   const stratify = d3
     .stratify<Aggregate>()
     .id((d) => d.account)
@@ -310,19 +315,27 @@ function renderPartition(
     .style("left", (d: any) => d.x0 + "px")
     .style("width", (d: any) => d.x1 - d.x0 + "px")
     .style("height", (d: any) => d.y1 - d.y0 + "px")
-    .style("background", (d) => color(d.id))
-    .style("color", (d) => darkenOrLighten(color(d.id)));
+    .style("background", (d) => color(groupKey(d.id)))
+    .style("color", (d) => darkenOrLighten(color(groupKey(d.id))));
 
+  // Slivers get no text (tooltip still works); ambiguous leaf names (CJ, Trust)
+  // get their parent segment for context when there's room.
+  const isSliver = (d: any) => d.x1 - d.x0 < 55 || d.y1 - d.y0 < 32;
   cell
     .append("p")
     .attr("class", "heading has-text-weight-bold")
-    .text((d) => lastName(d.id));
+    .text((d: any) => {
+      if (isSliver(d)) return "";
+      const parts = d.id.split(":");
+      if (parts.length > 2 && d.x1 - d.x0 > 110) return parts.slice(-2).join(":");
+      return lastName(d.id);
+    });
 
   cell
     .append("p")
     .attr("class", "heading has-text-weight-bold")
     .style("font-size", "0.75rem")
-    .text(percent);
+    .text((d: any) => (isSliver(d) ? "" : percent(d)));
 
   cell.each(function (d: any) {
     if (d.data.gross_amount !== undefined && d.data.mortgage_amount !== undefined) {

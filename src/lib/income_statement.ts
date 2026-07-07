@@ -13,11 +13,11 @@ import { iconGlyph, iconify } from "./icon";
 import { pathArrows } from "d3-path-arrows";
 
 export function renderIncomeStatement(element: Element) {
-  const BARS = 14;
+  const BARS = 12;
   const BAR_HEIGHT = 45;
 
   const svg = d3.select(element),
-    margin = { top: rem(20), right: rem(20), bottom: rem(10), left: rem(230) },
+    margin = { top: rem(20), right: rem(20), bottom: rem(10), left: rem(260) },
     width = Math.max(element.parentElement.clientWidth, 600) - margin.left - margin.right,
     g = svg.append("g").attr("transform", "translate(" + margin.left + "," + margin.top + ")");
 
@@ -38,6 +38,7 @@ export function renderIncomeStatement(element: Element) {
   const yAxis = g.append("g").attr("class", "axis y dark is-large");
 
   const garrows = g.append("g");
+  const gdivider = g.append("g");
   const gbars = g.append("g");
   const glines = g.append("g");
   const gmarks = g.append("g");
@@ -86,19 +87,26 @@ export function renderIncomeStatement(element: Element) {
     const isRentalIncome = (acct: string) => acct.toLowerCase().startsWith("income:rental");
     const isDividend = (acct: string) => acct.toLowerCase().startsWith("income:dividends");
     const isRentalExpense = (acct: string) => acct.toLowerCase().startsWith("expenses:rental") || acct === "Expenses:Housing:Mortgage";
+    // Michigan property taxes are a rental cost (Jul+Dec lumps), not household tax.
+    const isPropertyTax = (acct: string) => acct.toLowerCase().startsWith("expenses:tax:property");
 
     // Keep all intermediate amounts as POSITIVE numbers:
     const grossRental = Math.abs(sumMatching(statement.income, isRentalIncome));
-    const rentalExpenses = Math.abs(sumMatching(statement.expenses, isRentalExpense));
+    const rentalExpenses =
+      Math.abs(sumMatching(statement.expenses, isRentalExpense)) +
+      Math.abs(sumMatching(statement.tax, isPropertyTax));
     const netRental = grossRental - rentalExpenses; // Positive if income > expenses, negative if expenses > income
 
     // Operating Income (excluding rental and dividends)
     const isOperatingIncome = (acct: string) => !isRentalIncome(acct) && !isDividend(acct);
     const operatingIncome = Math.abs(sumMatching(statement.income, isOperatingIncome) + sumMatching(statement.interest, isOperatingIncome));
 
-    // Operating Expenses (excluding rental expenses and mortgage interest, but including taxes)
+    // Operating Expenses (excluding rental expenses and mortgage interest, but including
+    // non-property taxes; property tax nets against rental above)
     const isOperatingExpense = (acct: string) => !isRentalExpense(acct);
-    const operatingExpenses = Math.abs(sumMatching(statement.expenses, isOperatingExpense)) + Math.abs(sumAll(statement.tax));
+    const operatingExpenses =
+      Math.abs(sumMatching(statement.expenses, isOperatingExpense)) +
+      Math.abs(sumMatching(statement.tax, (k) => !isPropertyTax(k)));
 
     // Operating cash flows
     const operatingStart = statement.startingBalance;
@@ -146,9 +154,6 @@ export function renderIncomeStatement(element: Element) {
     // Checking Cash Delta calculations
     const checkingEnd = operatingEnd + vanguardWithdrawals - contributions - mortgagePaydown;
     const checkingDelta = checkingEnd - operatingStart;
-
-    // Reclassification offsets to bridge to net worth changes
-    const reclassEnd = checkingEnd + contributions - vanguardWithdrawals + mortgagePaydown; // resolves to operatingEnd
 
     // Net Worth Delta (ending net worth matches exactly)
     const totalChange = statement.endingBalance - statement.startingBalance;
@@ -243,38 +248,22 @@ export function renderIncomeStatement(element: Element) {
         breakdown: liquidBreakdown,
         multiplier: 1
       },
-      // --- Wealth Reclassifications (Resolves the Cash Flow vs Net Worth Paradox) ---
+      // --- NET WORTH group: restarts from the period-start balance. The
+      // retirement/withdrawal/paydown moves above are asset<->asset transfers,
+      // invisible to net worth, so they simply don't appear here. ---
       {
-        label: "Mortgage Paydown (Debt Decrease)",
-        start: checkingEnd,
-        end: checkingEnd + mortgagePaydown,
-        color: COLORS.gain,
-        value: mortgagePaydown,
-        breakdown: _.pickBy(statement.liabilities, (v, k) => isMortgageAccount(k)),
-        multiplier: -1
-      },
-      {
-        label: "Retirement Savings (Asset Increase)",
-        start: checkingEnd + mortgagePaydown,
-        end: checkingEnd + mortgagePaydown + contributions,
-        color: COLORS.gain,
-        value: contributions,
-        breakdown: _.pickBy(assetsMap, (v, k) => !isChecking(k) && v > 0),
-        multiplier: 1
-      },
-      {
-        label: "Vanguard Withdrawals (Asset Decrease)",
-        start: checkingEnd + mortgagePaydown + contributions,
-        end: reclassEnd,
-        color: COLORS.loss,
-        value: -vanguardWithdrawals,
-        breakdown: _.pickBy(assetsMap, (v, k) => !isChecking(k) && v < 0),
+        label: "Operating Cash Flow (carried)",
+        start: operatingStart,
+        end: operatingEnd,
+        color: COLORS.secondary,
+        value: operatingCashFlow,
+        breakdown: {},
         multiplier: 1
       },
       {
         label: "Market Gains & Growth",
-        start: reclassEnd,
-        end: reclassEnd + marketGains,
+        start: operatingEnd,
+        end: operatingEnd + marketGains,
         color: marketGains > 0 ? COLORS.gain : COLORS.loss,
         value: marketGains,
         breakdown: {
@@ -285,7 +274,7 @@ export function renderIncomeStatement(element: Element) {
       },
       {
         label: "Other / Adjustments",
-        start: reclassEnd + marketGains,
+        start: operatingEnd + marketGains,
         end: statement.endingBalance,
         color: COLORS.neutral,
         value: junk,
@@ -320,10 +309,9 @@ export function renderIncomeStatement(element: Element) {
       { label: "Retirement & Investment Savings", value: operatingEnd + vanguardWithdrawals, anchor: "end" },
       { label: "Mortgage Principal Paydown", value: operatingEnd + vanguardWithdrawals - contributions, anchor: "end" },
       { label: "🏁 Checking & Card Float Delta", value: checkingEnd, anchor: "end" },
-      { label: "Mortgage Paydown (Debt Decrease)", value: checkingEnd, anchor: "end" },
-      { label: "Retirement Savings (Asset Increase)", value: checkingEnd + mortgagePaydown, anchor: "end" },
-      { label: "Vanguard Withdrawals (Asset Decrease)", value: checkingEnd + mortgagePaydown + contributions, anchor: "end" },
-      { label: "Market Gains & Growth", value: reclassEnd, anchor: "end" },
+      { label: "Operating Cash Flow (carried)", value: operatingStart, anchor: "start" },
+      { label: "Market Gains & Growth", value: operatingEnd, anchor: "end" },
+      { label: "Other / Adjustments", value: operatingEnd + marketGains, anchor: "end" },
       {
         label: "🏁 Net Worth Delta",
         value: statement.endingBalance,
@@ -343,16 +331,44 @@ export function renderIncomeStatement(element: Element) {
         operatingEnd + vanguardWithdrawals,
         operatingEnd + vanguardWithdrawals - contributions,
         checkingEnd,
-        checkingEnd + mortgagePaydown,
-        checkingEnd + mortgagePaydown + contributions,
-        reclassEnd,
-        reclassEnd + marketGains,
+        operatingEnd + marketGains,
         statement.endingBalance
       ])
     );
 
     xAxis.transition(t).call(d3.axisTop(x).tickSize(height).tickFormat(formatCurrencyCrude));
     yAxis.transition(t).call(d3.axisLeft(y).tickSize(-width).tickPadding(10));
+
+    // Divider between the CASH FLOW group (bars 1-8) and the NET WORTH group
+    // (bars 9-12), which restarts its own waterfall from the period start.
+    gdivider.selectAll("*").remove();
+    const dividerY =
+      (y("🏁 Checking & Card Float Delta") + y.bandwidth() + y("Operating Cash Flow (carried)")) / 2;
+    gdivider
+      .append("line")
+      .attr("class", "svg-grey")
+      .attr("stroke-width", 1.5)
+      .attr("stroke-dasharray", "6,4")
+      .attr("x1", -margin.left + rem(8))
+      .attr("x2", width)
+      .attr("y1", dividerY)
+      .attr("y2", dividerY);
+    gdivider
+      .append("text")
+      .attr("class", "svg-text-grey")
+      .attr("font-size", "0.7rem")
+      .attr("letter-spacing", "0.1em")
+      .attr("x", -margin.left + rem(8))
+      .attr("y", dividerY - rem(6))
+      .text("▲ CASH FLOW — did checking fund the period?");
+    gdivider
+      .append("text")
+      .attr("class", "svg-text-grey")
+      .attr("font-size", "0.7rem")
+      .attr("letter-spacing", "0.1em")
+      .attr("x", -margin.left + rem(8))
+      .attr("y", dividerY + rem(12))
+      .text("▼ NET WORTH — full change, markets included");
 
     garrows.selectAll("g").remove();
     t.on("end", () => {

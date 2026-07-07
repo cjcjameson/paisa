@@ -119,14 +119,20 @@ func computeStatement(db *gorm.DB, postings []posting.Posting) map[string]Income
 			runnings[account] = r
 		}
 
+		// Net worth accumulation. Per double entry, each year's asset change
+		// equals -(income + equity + expenses + tax + liabilities), so summing
+		// the negated flow categories plus pnl yields assets at market AND the
+		// liability change already folded in. The old extra
+		// `Liabilities.Neg()` term cancelled that fold-in, making the headline
+		// assets-only (net worth overstated by total debt, ~$330k).
+		sumBalance(incomeStatement.Liabilities) // prune zero entries only
 		startingBalance = startingBalance.
 			Add(sumBalance(incomeStatement.Income).Neg()).
 			Add(sumBalance(incomeStatement.Interest).Neg()).
 			Add(sumBalance(incomeStatement.Equity).Neg()).
 			Add(sumBalance(incomeStatement.Tax).Neg()).
 			Add(sumBalance(incomeStatement.Expenses).Neg()).
-			Add(sumBalance(incomeStatement.Pnl)).
-			Add(sumBalance(incomeStatement.Liabilities).Neg())
+			Add(sumBalance(incomeStatement.Pnl))
 
 		incomeStatement.EndingBalance = startingBalance
 

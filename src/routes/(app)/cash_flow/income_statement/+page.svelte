@@ -20,9 +20,49 @@
   let incomeStatement: IncomeStatement;
   let renderer: (data: IncomeStatement) => void;
   let yearly: Record<string, IncomeStatement> = {};
+  let monthly: Record<string, IncomeStatement> = {};
   let diff: number;
   let diffPercent: number;
   let years: string[] = [];
+
+  // Custom range mode: aggregate monthly buckets ("2026-01") into any
+  // contiguous window instead of a whole FY.
+  let rangeMode = false;
+  let fromMonth = "";
+  let toMonth = "";
+  $: monthKeys = _.sortBy(_.keys(monthly));
+
+  const AGG_MAPS = [
+    "income",
+    "interest",
+    "equity",
+    "pnl",
+    "assets",
+    "liabilities",
+    "tax",
+    "expenses"
+  ] as const;
+
+  function aggregateRange(from: string, to: string): IncomeStatement | null {
+    if (!from || !to || from > to) return null;
+    const keys = monthKeys.filter((k) => k >= from && k <= to);
+    if (_.isEmpty(keys)) return null;
+    const agg: any = {
+      date: monthly[keys[0]].date,
+      startingBalance: monthly[keys[0]].startingBalance,
+      endingBalance: monthly[_.last(keys)].endingBalance
+    };
+    for (const m of AGG_MAPS) agg[m] = {};
+    for (const k of keys) {
+      const s: any = monthly[k];
+      for (const m of AGG_MAPS) {
+        for (const [acct, v] of Object.entries(s[m] || {})) {
+          agg[m][acct] = (agg[m][acct] || 0) + (v as number);
+        }
+      }
+    }
+    return agg as IncomeStatement;
+  }
 
   type AccountGroupName =
     | "income"
@@ -60,12 +100,13 @@
 
   const accountGroups: AccountGroup[] = [];
 
-  $: if (yearly && renderer) {
-    if (yearly[$year] == null) {
+  $: if (renderer) {
+    const statement = rangeMode ? aggregateRange(fromMonth, toMonth) : yearly && yearly[$year];
+    if (statement == null) {
       incomeStatement = null;
       isEmpty = true;
     } else {
-      incomeStatement = yearly[$year];
+      incomeStatement = statement;
       years = _.sortBy(_.keys(yearly)).reverse();
       diff = incomeStatement.endingBalance - incomeStatement.startingBalance;
       diffPercent = diff / incomeStatement.startingBalance;
@@ -86,11 +127,18 @@
   }
 
   onMount(async () => {
-    ({ yearly } = await ajax("/api/income_statement"));
+    ({ yearly, monthly } = await ajax("/api/income_statement"));
     const y = _.minBy(_.values(yearly), (y) => y.date);
     renderer = renderIncomeStatement(svg);
     if (y) {
       dateMin.set(y.date);
+    }
+
+    // Default custom range: trailing 6 months.
+    const keys = _.sortBy(_.keys(monthly));
+    if (keys.length > 0) {
+      toMonth = _.last(keys);
+      fromMonth = keys[Math.max(0, keys.length - 6)];
     }
 
     accountGroups.push({
@@ -147,13 +195,13 @@
 <section class="section">
   <div class="container is-fluid">
     <div class="columns flex-wrap">
-      {#if incomeStatement}
-        <div class="column is-12">
-          <div class="box py-2 my-0 overflow-x-auto">
-            <div class="is-flex mr-2 is-align-items-baseline" style="min-width: fit-content">
-              <div class="ml-3 custom-icon is-size-5 whitespace-nowrap">
-                {$year}
-              </div>
+      <div class="column is-12">
+        <div class="box py-2 my-0 overflow-x-auto">
+          <div class="is-flex mr-2 is-align-items-baseline" style="min-width: fit-content">
+            <div class="ml-3 custom-icon is-size-5 whitespace-nowrap">
+              {rangeMode ? `${fromMonth} → ${toMonth}` : $year}
+            </div>
+            {#if incomeStatement}
               <div class="ml-3 whitespace-nowrap">
                 <span class="mr-1 is-size-7 has-text-grey">Start</span>
                 <span class="has-text-weight-bold"
@@ -174,10 +222,34 @@
                   >{formatPercentage(diffPercent, 2)}</span
                 >
               </div>
+            {/if}
+            <div class="ml-auto is-flex is-align-items-center whitespace-nowrap">
+              <label class="checkbox is-size-7 mr-3">
+                <input type="checkbox" bind:checked={rangeMode} /> custom range
+              </label>
+              {#if rangeMode}
+                <input
+                  class="input is-small mr-1"
+                  style="width: 9.5rem"
+                  type="month"
+                  bind:value={fromMonth}
+                  min={_.first(monthKeys)}
+                  max={toMonth}
+                />
+                <span class="is-size-7 mr-1">→</span>
+                <input
+                  class="input is-small"
+                  style="width: 9.5rem"
+                  type="month"
+                  bind:value={toMonth}
+                  min={fromMonth}
+                  max={_.last(monthKeys)}
+                />
+              {/if}
             </div>
           </div>
         </div>
-      {/if}
+      </div>
       <div class="column is-12">
         <div class="box overflow-x-auto">
           <ZeroState item={!isEmpty}

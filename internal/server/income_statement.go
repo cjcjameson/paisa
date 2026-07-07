@@ -36,14 +36,25 @@ type RunningBalance struct {
 
 func GetIncomeStatement(db *gorm.DB) gin.H {
 	postings := query.Init(db).All()
-	statements := computeStatement(db, postings)
-	return gin.H{"yearly": statements}
+	yearly := computeStatement(db, utils.GroupByFY(postings), func(fy string) (time.Time, time.Time) {
+		return utils.ParseFY(fy)
+	})
+	// Monthly buckets ("2006-01" keys) let the frontend aggregate any
+	// contiguous 1-12 month range; startingBalance chains across months the
+	// same way it chains across years.
+	monthly := computeStatement(db, utils.GroupByMonth(postings), func(month string) (time.Time, time.Time) {
+		start, err := time.Parse("2006-01", month)
+		if err != nil {
+			return time.Time{}, time.Time{}
+		}
+		return start, start.AddDate(0, 1, -1)
+	})
+	return gin.H{"yearly": yearly, "monthly": monthly}
 }
 
-func computeStatement(db *gorm.DB, postings []posting.Posting) map[string]IncomeStatement {
+func computeStatement(db *gorm.DB, grouped map[string][]posting.Posting, bounds func(key string) (time.Time, time.Time)) map[string]IncomeStatement {
 	statements := make(map[string]IncomeStatement)
 
-	grouped := utils.GroupByFY(postings)
 	fys := lo.Keys(grouped)
 	sort.Strings(fys)
 
@@ -52,7 +63,7 @@ func computeStatement(db *gorm.DB, postings []posting.Posting) map[string]Income
 
 	for _, fy := range fys {
 		incomeStatement := IncomeStatement{}
-		start, end := utils.ParseFY(fy)
+		start, end := bounds(fy)
 		incomeStatement.Date = start
 		incomeStatement.StartingBalance = startingBalance
 		incomeStatement.Income = make(map[string]decimal.Decimal)

@@ -13,11 +13,11 @@ import { iconGlyph, iconify } from "./icon";
 import { pathArrows } from "d3-path-arrows";
 
 export function renderIncomeStatement(element: Element) {
-  const BARS = 16;
+  const BARS = 17;
   const BAR_HEIGHT = 45;
 
   const svg = d3.select(element),
-    margin = { top: rem(20), right: rem(20), bottom: rem(10), left: rem(260) },
+    margin = { top: rem(20), right: rem(20), bottom: rem(10), left: rem(290) },
     width = Math.max(element.parentElement.clientWidth, 600) - margin.left - margin.right,
     g = svg.append("g").attr("transform", "translate(" + margin.left + "," + margin.top + ")");
 
@@ -149,10 +149,13 @@ export function renderIncomeStatement(element: Element) {
       if (isChecking(k)) checkingBreakdown[k] = v as number;
     }
 
+    // Options are excluded here: vests arrive without cash moving (see the
+    // Options Vested bar below the line).
+    const isOptionsAsset = (acct: string) => acct.toLowerCase().startsWith("assets:options");
     let investmentSales = 0;
     let investmentBuys = 0;
     for (const [acct, val] of Object.entries(assetsMap)) {
-      if (!isChecking(acct) && !isVestwell(acct)) {
+      if (!isChecking(acct) && !isVestwell(acct) && !isOptionsAsset(acct)) {
         if ((val as number) < 0) {
           investmentSales += Math.abs(val as number);
         } else {
@@ -225,9 +228,24 @@ export function renderIncomeStatement(element: Element) {
 
     // --- Section 3: pure net-worth accruals that never touched checking.
     const dividendIncome = Math.abs(sumMatching(statement.income, isDividend));
+    // Options Vested = NEW units arriving during the period. Paisa values a
+    // no-cost vest posting at its market price on arrival, so the vest value
+    // lives in the asset delta (counter: Equity:OpeningBalance), not in pnl.
     const isOptions = (acct: string) => acct.toLowerCase().startsWith("assets:options");
-    const optionsVested = sumMatching(statement.pnl, isOptions);
-    const marketGains = sumAll(statement.pnl) - optionsVested;
+    let optionsVested = 0;
+    for (const [acct, val] of Object.entries(assetsMap)) {
+      if (isOptions(acct) && (val as number) > 0) optionsVested += val as number;
+    }
+    // Manual marks: properties, the Bronco, and illiquid options/shares —
+    // price changes set by hand in prices.journal, not by a market feed.
+    const isManualMark = (acct: string) => {
+      const l = acct.toLowerCase();
+      return (
+        l.startsWith("assets:realestate") || l.startsWith("assets:vehicles") || isOptions(acct)
+      );
+    };
+    const manualMarks = sumMatching(statement.pnl, isManualMark);
+    const marketGains = sumAll(statement.pnl) - manualMarks;
 
     // Net Worth Delta (ending net worth matches exactly)
     const totalChange = statement.endingBalance - statement.startingBalance;
@@ -236,11 +254,21 @@ export function renderIncomeStatement(element: Element) {
     // appear here (mortgage/cards are already in their cash-flow bars).
     const junk =
       totalChange -
-      (operatingCashFlow + vestwellContributions + optionsVested + dividendIncome + marketGains);
+      (operatingCashFlow +
+        vestwellContributions +
+        dividendIncome +
+        marketGains +
+        optionsVested +
+        manualMarks);
 
     const junkBreakdown: Record<string, number> = {};
     for (const [k, v] of Object.entries(statement.equity || {})) {
       junkBreakdown[k] = -(v as number);
+    }
+    // Vests are booked against Equity:OpeningBalance; their value is shown as
+    // the Options Vested bar, so back it out here to keep the rows summing.
+    if (optionsVested > 0.01) {
+      junkBreakdown["Less: Options Vested (own bar above)"] = -optionsVested;
     }
 
     const t = svg.transition().duration(firstRender ? 0 : 750);
@@ -258,9 +286,10 @@ export function renderIncomeStatement(element: Element) {
     const afterBuys = afterSales - investmentBuys;
     const afterMortgage = afterBuys - mortgagePaydown;
     const afterVestwell = operatingEnd + vestwellContributions;
-    const afterOptions = afterVestwell + optionsVested;
-    const afterDividends = afterOptions + dividendIncome;
+    const afterDividends = afterVestwell + dividendIncome;
     const afterMarket = afterDividends + marketGains;
+    const afterOptions = afterMarket + optionsVested;
+    const afterMarks = afterOptions + manualMarks;
 
     // Build the 16 waterfall bars
     const bars: Bar[] = [
@@ -290,7 +319,11 @@ export function renderIncomeStatement(element: Element) {
         value: netRental,
         breakdown: {
           ..._.pickBy(statement.income, (v, k) => isRentalIncome(k)),
-          ..._.pickBy(statement.expenses, (v, k) => isRentalExpense(k)),
+          ..._.mapKeys(
+            _.pickBy(statement.expenses, (v, k) => isRentalExpense(k)),
+            (v, k) =>
+              k === "Expenses:Housing:Mortgage" ? "Mortgage Interest + Escrow (principal below)" : k
+          ),
           ..._.pickBy(statement.tax, (v, k) => isPropertyTax(k))
         },
         multiplier: -1
@@ -312,7 +345,10 @@ export function renderIncomeStatement(element: Element) {
         end: afterSales,
         color: COLORS.income,
         value: investmentSales,
-        breakdown: _.pickBy(assetsMap, (v, k) => !isChecking(k) && !isVestwell(k) && v < 0),
+        breakdown: _.pickBy(
+          assetsMap,
+          (v, k) => !isChecking(k) && !isVestwell(k) && !isOptionsAsset(k) && v < 0
+        ),
         multiplier: -1
       },
       {
@@ -321,7 +357,10 @@ export function renderIncomeStatement(element: Element) {
         end: afterBuys,
         color: COLORS.expenses,
         value: -investmentBuys,
-        breakdown: _.pickBy(assetsMap, (v, k) => !isChecking(k) && !isVestwell(k) && v > 0),
+        breakdown: _.pickBy(
+          assetsMap,
+          (v, k) => !isChecking(k) && !isVestwell(k) && !isOptionsAsset(k) && v > 0
+        ),
         multiplier: 1
       },
       {
@@ -373,17 +412,8 @@ export function renderIncomeStatement(element: Element) {
         multiplier: -1
       },
       {
-        label: "Options Vested",
-        start: afterVestwell,
-        end: afterOptions,
-        color: COLORS.primary,
-        value: optionsVested,
-        breakdown: _.pickBy(statement.pnl, (v, k) => isOptions(k)),
-        multiplier: 1
-      },
-      {
         label: "Dividends (Reinvested)",
-        start: afterOptions,
+        start: afterVestwell,
         end: afterDividends,
         color: COLORS.income,
         value: dividendIncome,
@@ -396,12 +426,30 @@ export function renderIncomeStatement(element: Element) {
         end: afterMarket,
         color: marketGains > 0 ? COLORS.gain : COLORS.loss,
         value: marketGains,
-        breakdown: _.omitBy(statement.pnl, (v, k) => isOptions(k)),
+        breakdown: _.omitBy(statement.pnl, (v, k) => isOptions(k) || isManualMark(k)),
+        multiplier: 1
+      },
+      {
+        label: "Options Vested",
+        start: afterMarket,
+        end: afterOptions,
+        color: COLORS.primary,
+        value: optionsVested,
+        breakdown: _.pickBy(assetsMap, (v, k) => isOptions(k) && v > 0),
+        multiplier: 1
+      },
+      {
+        label: "Appreciation / Depreciation (Marks)",
+        start: afterOptions,
+        end: afterMarks,
+        color: COLORS.neutral,
+        value: manualMarks,
+        breakdown: _.pickBy(statement.pnl, (v, k) => isManualMark(k)),
         multiplier: 1
       },
       {
         label: "Other / Adjustments",
-        start: afterMarket,
+        start: afterMarks,
         end: statement.endingBalance,
         color: COLORS.neutral,
         value: junk,
@@ -439,10 +487,11 @@ export function renderIncomeStatement(element: Element) {
       { label: "🏁 Liquid Delta (Checking − Cards)", value: afterMortgage, anchor: "end" },
       { label: "Operating Cash Flow (carried)", value: operatingStart, anchor: "start" },
       { label: "Vestwell Contributions (Payroll)", value: operatingEnd, anchor: "end" },
-      { label: "Options Vested", value: afterVestwell, anchor: "end" },
-      { label: "Dividends (Reinvested)", value: afterOptions, anchor: "end" },
+      { label: "Dividends (Reinvested)", value: afterVestwell, anchor: "end" },
       { label: "Market Gains & Growth", value: afterDividends, anchor: "end" },
-      { label: "Other / Adjustments", value: afterMarket, anchor: "end" },
+      { label: "Options Vested", value: afterMarket, anchor: "end" },
+      { label: "Appreciation / Depreciation (Marks)", value: afterOptions, anchor: "end" },
+      { label: "Other / Adjustments", value: afterMarks, anchor: "end" },
       {
         label: "🏁 Net Worth Delta",
         value: statement.endingBalance,
@@ -464,9 +513,10 @@ export function renderIncomeStatement(element: Element) {
         afterMortgage,
         pureCheckingEnd,
         afterVestwell,
-        afterOptions,
         afterDividends,
         afterMarket,
+        afterOptions,
+        afterMarks,
         statement.endingBalance
       ])
     );
@@ -476,34 +526,47 @@ export function renderIncomeStatement(element: Element) {
 
     // Divider between the CASH FLOW group (bars 1-8) and the NET WORTH group
     // (bars 9-12), which restarts its own waterfall from the period start.
+    // The chart tells a three-part story: (1) operating cash flow is what it
+    // is; (2) assets were sold/bought to balance checking & cards; (3) big
+    // picture, net worth moves on despite the operating back-heel.
     gdivider.selectAll("*").remove();
-    const dividerY =
-      (y("🏁 Liquid Delta (Checking − Cards)") + y.bandwidth() + y("Operating Cash Flow (carried)")) / 2;
-    gdivider
-      .append("line")
-      .attr("class", "svg-grey")
-      .attr("stroke-width", 1.5)
-      .attr("stroke-dasharray", "6,4")
-      .attr("x1", -margin.left + rem(8))
-      .attr("x2", width)
-      .attr("y1", dividerY)
-      .attr("y2", dividerY);
-    gdivider
-      .append("text")
-      .attr("class", "svg-text-grey")
-      .attr("font-size", "0.7rem")
-      .attr("letter-spacing", "0.1em")
-      .attr("x", -margin.left + rem(8))
-      .attr("y", dividerY - rem(6))
-      .text("▲ CASH FLOW — did checking fund the period?");
-    gdivider
-      .append("text")
-      .attr("class", "svg-text-grey")
-      .attr("font-size", "0.7rem")
-      .attr("letter-spacing", "0.1em")
-      .attr("x", -margin.left + rem(8))
-      .attr("y", dividerY + rem(12))
-      .text("▼ NET WORTH — full change, markets included");
+    const drawDivider = (labelAbove: string, labelBelow: string, above: string, below: string) => {
+      const dy = (y(labelAbove) + y.bandwidth() + y(labelBelow)) / 2;
+      gdivider
+        .append("line")
+        .attr("class", "svg-grey")
+        .attr("stroke-width", 1.5)
+        .attr("stroke-dasharray", "6,4")
+        .attr("x1", -margin.left + rem(8))
+        .attr("x2", width)
+        .attr("y1", dy)
+        .attr("y2", dy);
+      for (const [text, offset] of [
+        [above, -rem(6)],
+        [below, rem(12)]
+      ] as const) {
+        gdivider
+          .append("text")
+          .attr("class", "svg-text-grey")
+          .attr("font-size", "0.7rem")
+          .attr("letter-spacing", "0.1em")
+          .attr("x", -margin.left + rem(8))
+          .attr("y", dy + offset)
+          .text(text);
+      }
+    };
+    drawDivider(
+      "🏁 Operating Cash Flow",
+      "Investment Sales → Cash",
+      "▲ OPERATING — did income cover daily life?",
+      "▼ CASH ↔ ASSETS — selling & buying assets to keep checking + cards stable"
+    );
+    drawDivider(
+      "🏁 Liquid Delta (Checking − Cards)",
+      "Operating Cash Flow (carried)",
+      "▲ CASH FLOW",
+      "▼ NET WORTH — the big picture: contributions, dividends, markets, vesting, marks"
+    );
 
     garrows.selectAll("g").remove();
     t.on("end", () => {
@@ -521,8 +584,11 @@ export function renderIncomeStatement(element: Element) {
         "The same operating cash flow from the group above, restated as the first step of the net-worth walk. The cash↔asset swaps above the line are net-worth-neutral, so they don't appear here.",
       "Vestwell Contributions (Payroll)":
         "Retirement savings withheld from the paycheck before it reached checking — excluded from operating income above, counted here as new net worth.",
+      "Rental Income (Net)": `The mortgage line here is interest + escrow only. The principal portion (${formatCurrency(mortgagePaydown)}) appears as its own Mortgage Principal Paydown bar in the cash↔asset section — same payments, split in two, not double-counted.`,
       "Options Vested":
-        "Startup options that vested during the period, at their nominal price — assets that appeared without spending cash.",
+        "NEW startup options/shares that vested during the period, valued at their price on arrival (Parabola at 10¢). No cash moved — they simply appeared in net worth. Later repricing shows under Appreciation / Depreciation.",
+      "Appreciation / Depreciation (Marks)":
+        "Manual markups/markdowns on illiquid assets: the properties, the Bronco, and startup shares/options. These are hand-set prices, not market feeds.",
       "Dividends (Reinvested)":
         "Dividends earned inside investment accounts (reinvested or held there) — they accrue to net worth without passing through checking.",
       "🏁 Net Worth Delta":

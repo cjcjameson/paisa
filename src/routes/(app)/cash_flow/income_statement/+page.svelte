@@ -18,7 +18,7 @@
 
   let svg: Element;
   let incomeStatement: IncomeStatement;
-  let renderer: (data: IncomeStatement) => void;
+  let renderer: (data: IncomeStatement, months?: IncomeStatement[]) => void;
   let yearly: Record<string, IncomeStatement> = {};
   let monthly: Record<string, IncomeStatement> = {};
   let diff: number;
@@ -111,7 +111,14 @@
       diff = incomeStatement.endingBalance - incomeStatement.startingBalance;
       diffPercent = diff / incomeStatement.startingBalance;
 
-      renderer(incomeStatement);
+      // Months composing the current view, for per-payment tooltip detail.
+      const monthsInView = (
+        rangeMode
+          ? monthKeys.filter((k) => k >= fromMonth && k <= toMonth)
+          : monthKeys.filter((k) => k.startsWith(`${$year}-`))
+      ).map((k) => monthly[k]);
+
+      renderer(incomeStatement, monthsInView);
       isEmpty = false;
     }
   }

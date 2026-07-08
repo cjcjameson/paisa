@@ -234,12 +234,18 @@ export function renderIncomeStatement(element: Element) {
     const afterBuys = operatingEnd - investmentBuys;
     const afterMortgage = afterBuys - mortgagePaydown;
     const liquidEnd = afterMortgage + investmentSales;
-    const liquidDelta = liquidEnd - operatingStart;
 
     const liquidBreakdown: Record<string, number> = { ...checkingBreakdown };
     for (const [k, v] of Object.entries(statement.liabilities)) {
       if (isCreditCard(k)) liquidBreakdown[k] = v as number;
     }
+
+    // The checkpoint reports ACTUAL balance changes (checking + cards), not
+    // the walk: asset book deltas include in-account flows (reinvested
+    // dividends, margin, card rewards) that never touch cash, so the section
+    // bars can land slightly off. The gap is disclosed in the tooltip.
+    const liquidDelta = sumAll(liquidBreakdown);
+    const nonCashGap = liquidDelta - (liquidEnd - operatingStart);
 
     // --- Section 3: pure net-worth accruals that never touched checking.
     const dividendIncome = Math.abs(sumMatching(statement.income, isDividend));
@@ -401,7 +407,7 @@ export function renderIncomeStatement(element: Element) {
       {
         label: "🏁 Liquid Delta (Checking − Cards)",
         start: operatingStart,
-        end: liquidEnd,
+        end: operatingStart + liquidDelta,
         color: COLORS.assets,
         value: liquidDelta,
         breakdown: liquidBreakdown,
@@ -501,7 +507,11 @@ export function renderIncomeStatement(element: Element) {
       { label: "Cash → Investments & Assets", value: operatingEnd, anchor: "end" },
       { label: "Mortgage Principal Paydown", value: afterBuys, anchor: "end" },
       { label: "Investment Sales → Cash", value: afterMortgage, anchor: "end" },
-      { label: "🏁 Liquid Delta (Checking − Cards)", value: liquidEnd, anchor: "end" },
+      {
+        label: "🏁 Liquid Delta (Checking − Cards)",
+        value: operatingStart + liquidDelta,
+        anchor: "end"
+      },
       { label: "Operating Cash Flow (carried)", value: operatingStart, anchor: "start" },
       { label: "Vestwell Contributions (Payroll)", value: operatingEnd, anchor: "end" },
       { label: "Dividends (Reinvested)", value: afterVestwell, anchor: "end" },
@@ -529,6 +539,7 @@ export function renderIncomeStatement(element: Element) {
         afterBuys,
         afterMortgage,
         liquidEnd,
+        operatingStart + liquidDelta,
         afterVestwell,
         afterDividends,
         afterMarket,
@@ -595,8 +606,13 @@ export function renderIncomeStatement(element: Element) {
     const BAR_DESCRIPTIONS: Record<string, string> = {
       "🏁 Operating Cash Flow":
         "Operating income + net rental − operating expenses (the three bars above, netted). Did day-to-day cash cover the period?",
-      "🏁 Liquid Delta (Checking − Cards)":
-        "Change in net liquid position: checking balances minus card balances. Usually near zero — negative means new pending card charges or less cash on hand; positive means cards paid off or cash built up. (Paying a card from checking doesn't move this number.)",
+      "🏁 Liquid Delta (Checking − Cards)": `Actual change in net liquid position: checking balances minus card balances. Usually near zero — negative means new pending card charges or less cash on hand; positive means cards paid off or cash built up.${
+        Math.abs(nonCashGap) > 1
+          ? ` The section bars above land ${formatCurrency(nonCashGap)} away because asset book values also move without cash — reinvested dividends, margin, card rewards.`
+          : ""
+      }`,
+      "Cash → Investments & Assets":
+        "Asset purchases funded from cash — plus some book-value increases that did NOT use cash: reinvested dividends inside Vanguard/HSA, card-reward deposits into Robinhood, margin. The 🏁 bar below reports actual balances.",
       "Operating Cash Flow (carried)":
         "The same operating cash flow from the group above, restated as the first step of the net-worth walk. The cash↔asset swaps above the line are net-worth-neutral, so they don't appear here.",
       "Vestwell Contributions (Payroll)":

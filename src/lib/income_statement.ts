@@ -462,10 +462,14 @@ export function renderIncomeStatement(element: Element) {
         }
 
         return tooltip(
-          _.map(secondLevelBreakdown, (value, label) => [
-            iconify(label),
-            [formatCurrency(value * d.multiplier), "has-text-right has-text-weight-bold"]
-          ]),
+          _.chain(secondLevelBreakdown)
+            .toPairs()
+            .sortBy(([, value]) => -Math.abs(value))
+            .map(([label, value]) => [
+              iconify(label),
+              [formatCurrency(value * d.multiplier), "has-text-right has-text-weight-bold"]
+            ])
+            .value(),
           { header: d.label, total: formatCurrency(d.value) }
         );
       })

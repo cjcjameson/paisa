@@ -44,6 +44,9 @@ export function renderIncomeStatement(element: Element) {
   const gmarks = g.append("g");
   const gamounts = g.append("g");
   const gicons = g.append("g");
+  // Topmost group: invisible rects that carry the tooltips, so labels and
+  // amount text never steal the hover and sliver bars get a usable target.
+  const ghover = g.append("g");
 
   interface Bar {
     label: string;
@@ -375,15 +378,21 @@ export function renderIncomeStatement(element: Element) {
       garrows.selectAll("g").data(bars).join("g").attr("class", "g-arrow is-light").call(arrows);
     });
 
-    gbars
-      .selectAll("rect")
-      .data(bars)
-      .join("rect")
-      .attr("stroke", (d) => d.color)
-      .attr("fill", (d) => d.color)
-      .attr("fill-opacity", 0.5)
-      .attr("data-tippy-content", (d) => {
-        const secondLevelBreakdown = _.chain(d.breakdown)
+    // Computed bars have no account breakdown; explain the arithmetic instead
+    // of showing an empty tooltip.
+    const BAR_DESCRIPTIONS: Record<string, string> = {
+      "🏁 Operating Cash Flow":
+        "Operating income + net rental − operating expenses (the three bars above, netted). Did day-to-day cash cover the period?",
+      "🏁 Checking & Card Float Delta":
+        "Operating cash flow + investment sales − savings − mortgage paydown: the actual change in checking & credit-card balances over the period.",
+      "Operating Cash Flow (carried)":
+        "The same operating cash flow from the group above, restated as the first step of the net-worth walk. The investment transfers above it move money between accounts, so they don't appear here.",
+      "🏁 Net Worth Delta":
+        "Ending net worth − starting net worth: operating cash flow + market gains + other adjustments, netted."
+    };
+
+    const barTooltip = (d: Bar) => {
+      const secondLevelBreakdown = _.chain(d.breakdown)
           .toPairs()
           .groupBy((pair) => firstNames(pair[0], 2))
           .map((pairs, label) => [label, _.sumBy(pairs, (pair) => pair[1])])
@@ -461,18 +470,43 @@ export function renderIncomeStatement(element: Element) {
           return tooltip(rows, { header: d.label, total: formatCurrency(d.value) });
         }
 
-        return tooltip(
-          _.chain(secondLevelBreakdown)
-            .toPairs()
-            .sortBy(([, value]) => -Math.abs(value))
-            .map(([label, value]) => [
-              iconify(label),
-              [formatCurrency(value * d.multiplier), "has-text-right has-text-weight-bold"]
-            ])
-            .value(),
-          { header: d.label, total: formatCurrency(d.value) }
-        );
-      })
+        const entries = _.chain(secondLevelBreakdown)
+          .toPairs()
+          .filter(([, value]) => Math.abs(value) > 0.01)
+          .sortBy(([, value]) => -Math.abs(value))
+          .map(
+            ([label, value]) =>
+              [
+                iconify(label),
+                [formatCurrency(value * d.multiplier), "has-text-right has-text-weight-bold"]
+              ] as Array<string | string[]>
+          )
+          .value();
+
+        if (_.isEmpty(entries)) {
+          const description = BAR_DESCRIPTIONS[d.label];
+          if (description) {
+            return tooltip([
+              [[d.label, "has-text-weight-bold has-text-centered", "2"]],
+              [[`<div style="max-width: 20rem; white-space: normal;">${description}</div>`, "", "2"]],
+              [
+                ["Total", "has-text-weight-bold"],
+                [formatCurrency(d.value), "has-text-weight-bold has-text-right"]
+              ]
+            ]);
+          }
+        }
+
+        return tooltip(entries, { header: d.label, total: formatCurrency(d.value) });
+      };
+
+    gbars
+      .selectAll("rect")
+      .data(bars)
+      .join("rect")
+      .attr("stroke", (d) => d.color)
+      .attr("fill", (d) => d.color)
+      .attr("fill-opacity", 0.5)
       .transition(t)
       .attr("x", function (d) {
         if (d.value < 0) {
@@ -527,6 +561,7 @@ export function renderIncomeStatement(element: Element) {
       .join("text")
       .attr("text-anchor", (d) => d.anchor)
       .attr("font-size", "0.7rem")
+      .attr("pointer-events", "none")
       .attr("class", "svg-text-grey")
       .attr("dy", (d) => (d.down ? "-0.5rem" : "1rem"))
       .attr("dx", (d) => (d.anchor === "start" ? "0.3rem" : "-0.3rem"))
@@ -549,6 +584,7 @@ export function renderIncomeStatement(element: Element) {
       .join("text")
       .attr("dy", "0.3rem")
       .attr("text-anchor", "middle")
+      .attr("pointer-events", "none")
       .attr("class", "svg-text-black-ter has-text-weight-bold")
       .transition(t)
       .attr("x", function (d) {
@@ -558,6 +594,24 @@ export function renderIncomeStatement(element: Element) {
         return y(d.label) + y.bandwidth() / 2;
       })
       .text((d) => formatCurrency(d.value));
+
+    // Invisible hover targets: at least HOVER_MIN_WIDTH wide (centered on the
+    // bar) so tiny bars and their overhanging amount labels are hoverable.
+    const HOVER_MIN_WIDTH = rem(90);
+    ghover
+      .selectAll("rect")
+      .data(bars)
+      .join("rect")
+      .attr("fill", "transparent")
+      .attr("data-tippy-content", barTooltip)
+      .attr("x", (d) => {
+        const x0 = Math.min(x(d.start), x(d.end));
+        const w = Math.abs(x(d.end) - x(d.start));
+        return w >= HOVER_MIN_WIDTH ? x0 : x0 + w / 2 - HOVER_MIN_WIDTH / 2;
+      })
+      .attr("width", (d) => Math.max(Math.abs(x(d.end) - x(d.start)), HOVER_MIN_WIDTH))
+      .attr("y", (d) => y(d.label))
+      .attr("height", y.bandwidth());
 
     gicons
       .selectAll("text")

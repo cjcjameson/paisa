@@ -13,7 +13,7 @@ import { iconGlyph, iconify } from "./icon";
 import { pathArrows } from "d3-path-arrows";
 
 export function renderIncomeStatement(element: Element) {
-  const BARS = 17;
+  const BARS = 18;
   const BAR_HEIGHT = 45;
 
   const svg = d3.select(element),
@@ -104,6 +104,18 @@ export function renderIncomeStatement(element: Element) {
       Math.abs(sumMatching(statement.tax, isPropertyTax));
     const netRental = grossRental - rentalExpenses; // Positive if income > expenses, negative if expenses > income
 
+    // Courtney's business, netted like the rental: her income minus business
+    // expenses. Expenses:Business:CJ is CJ's software, not hers.
+    const isCourtneyIncome = (acct: string) =>
+      acct.toLowerCase().startsWith("income:business:courtney");
+    const isCourtneyExpense = (acct: string) => {
+      const l = acct.toLowerCase();
+      return l.startsWith("expenses:business") && !l.startsWith("expenses:business:cj");
+    };
+    const grossCourtney = Math.abs(sumMatching(statement.income, isCourtneyIncome));
+    const courtneyExpenses = sumMatching(statement.expenses, isCourtneyExpense);
+    const netCourtney = grossCourtney - courtneyExpenses;
+
     // Vestwell contributions are payroll-withheld (the importer books them
     // Income:Salary:VestwellWithheld -> Assets:Vestwell); the cash never
     // touched checking, so they're excluded from operating income and get
@@ -113,9 +125,13 @@ export function renderIncomeStatement(element: Element) {
     const isVestwell = (acct: string) => acct.toLowerCase().startsWith("assets:vestwell");
     const vestwellContributions = Math.abs(sumMatching(statement.income, isVestwellIncome));
 
-    // Operating Income (excluding rental, dividends and payroll withholding)
+    // Operating Income (excluding rental, Courtney's business, dividends and
+    // payroll withholding)
     const isOperatingIncome = (acct: string) =>
-      !isRentalIncome(acct) && !isDividend(acct) && !isVestwellIncome(acct);
+      !isRentalIncome(acct) &&
+      !isDividend(acct) &&
+      !isVestwellIncome(acct) &&
+      !isCourtneyIncome(acct);
     const operatingIncome = Math.abs(
       sumMatching(statement.income, isOperatingIncome) +
         sumMatching(statement.interest, isOperatingIncome)
@@ -123,17 +139,17 @@ export function renderIncomeStatement(element: Element) {
 
     const assetsMap = (statement as any).assets || {};
 
-    // Operating Expenses (excluding rental expenses and mortgage interest, but including
-    // non-property taxes; property tax nets against rental above)
-    const isOperatingExpense = (acct: string) => !isRentalExpense(acct);
+    // Operating Expenses (excluding rental and Courtney business expenses,
+    // but including non-property taxes; property tax nets against rental)
+    const isOperatingExpense = (acct: string) => !isRentalExpense(acct) && !isCourtneyExpense(acct);
     const operatingExpenses =
       Math.abs(sumMatching(statement.expenses, isOperatingExpense)) +
       Math.abs(sumMatching(statement.tax, (k) => !isPropertyTax(k)));
 
     // Operating cash flows
     const operatingStart = statement.startingBalance;
-    const operatingEnd = operatingStart + operatingIncome - operatingExpenses + netRental;
-    const operatingCashFlow = operatingIncome - operatingExpenses + netRental;
+    const operatingCashFlow = operatingIncome - operatingExpenses + netCourtney + netRental;
+    const operatingEnd = operatingStart + operatingCashFlow;
 
     // --- Section 2: cash <-> asset swaps that really moved through checking
     // or the credit cards (Vanguard sells into checking, car purchases,
@@ -282,6 +298,7 @@ export function renderIncomeStatement(element: Element) {
     // Chain checkpoints
     const afterIncome = operatingStart + operatingIncome;
     const afterExpenses = afterIncome - operatingExpenses;
+    const afterCourtney = afterExpenses + netCourtney;
     const afterSales = operatingEnd + investmentSales;
     const afterBuys = afterSales - investmentBuys;
     const afterMortgage = afterBuys - mortgagePaydown;
@@ -312,8 +329,20 @@ export function renderIncomeStatement(element: Element) {
         multiplier: -1
       },
       {
-        label: "Rental Income (Net)",
+        label: "Courtney's Business (Net)",
         start: afterExpenses,
+        end: afterCourtney,
+        color: COLORS.primary,
+        value: netCourtney,
+        breakdown: {
+          ..._.pickBy(statement.income, (v, k) => isCourtneyIncome(k)),
+          ..._.pickBy(statement.expenses, (v, k) => isCourtneyExpense(k))
+        },
+        multiplier: -1
+      },
+      {
+        label: "Rental Income (Net)",
+        start: afterCourtney,
         end: operatingEnd,
         color: COLORS.primary,
         value: netRental,
@@ -478,7 +507,8 @@ export function renderIncomeStatement(element: Element) {
     const lines: Line[] = [
       { label: "Income (Operating)", value: operatingStart, anchor: "start", icon: "fa6-solid:caret-down" },
       { label: "Expenses (Operating)", value: afterIncome, anchor: "end" },
-      { label: "Rental Income (Net)", value: afterExpenses, anchor: "end" },
+      { label: "Courtney's Business (Net)", value: afterExpenses, anchor: "end" },
+      { label: "Rental Income (Net)", value: afterCourtney, anchor: "end" },
       { label: "🏁 Operating Cash Flow", value: operatingEnd, anchor: "end" },
       { label: "Investment Sales → Cash", value: operatingEnd, anchor: "end" },
       { label: "Cash → Investments & Assets", value: afterSales, anchor: "end" },
@@ -507,6 +537,7 @@ export function renderIncomeStatement(element: Element) {
         operatingStart,
         afterIncome,
         afterExpenses,
+        afterCourtney,
         operatingEnd,
         afterSales,
         afterBuys,
@@ -584,6 +615,8 @@ export function renderIncomeStatement(element: Element) {
         "The same operating cash flow from the group above, restated as the first step of the net-worth walk. The cash↔asset swaps above the line are net-worth-neutral, so they don't appear here.",
       "Vestwell Contributions (Payroll)":
         "Retirement savings withheld from the paycheck before it reached checking — excluded from operating income above, counted here as new net worth.",
+      "Courtney's Business (Net)":
+        "Courtney's business income net of business expenses (the WF business account and her cards). Negative expense lines are card credits/refunds.",
       "Rental Income (Net)": `The mortgage line here is interest + escrow only. The principal portion (${formatCurrency(mortgagePaydown)}) appears as its own Mortgage Principal Paydown bar in the cash↔asset section — same payments, split in two, not double-counted.`,
       "Options Vested":
         "NEW startup options/shares that vested during the period, valued at their price on arrival (Parabola at 10¢). No cash moved — they simply appeared in net worth. Later repricing shows under Appreciation / Depreciation.",
@@ -598,7 +631,8 @@ export function renderIncomeStatement(element: Element) {
     const barTooltip = (d: Bar) => {
       // Rental nets several Expenses:Housing/Tax subaccounts; show 3 levels
       // there so "Expenses:Housing:Mortgage" isn't mistaken for home rent.
-      const groupDepth = d.label === "Rental Income (Net)" ? 3 : 2;
+      const groupDepth =
+        d.label === "Rental Income (Net)" || d.label === "Courtney's Business (Net)" ? 3 : 2;
       const secondLevelBreakdown = _.chain(d.breakdown)
           .toPairs()
           .groupBy((pair) => firstNames(pair[0], groupDepth))

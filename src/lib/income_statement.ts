@@ -13,7 +13,7 @@ import { iconGlyph, iconify } from "./icon";
 import { pathArrows } from "d3-path-arrows";
 
 export function renderIncomeStatement(element: Element) {
-  const BARS = 18;
+  const BARS = 17;
   const BAR_HEIGHT = 45;
 
   const svg = d3.select(element),
@@ -201,12 +201,6 @@ export function renderIncomeStatement(element: Element) {
       }
     }
 
-    // Credit-card float: expenses are booked at charge time, so the extra
-    // cash that leaves checking is the debt DECREASE (paydown beyond new
-    // charges). Positive = debt shrank = cash out — but net worth-wise a
-    // good thing; the liquid checkpoint nets it back.
-    const ccPaydown = sumMatching(statement.liabilities, isCreditCard);
-
     // Card balance levels (before/after) for the tooltip: liability postings
     // sum to the account balance from inception (openings included), so
     // accumulating the monthly deltas up to the view boundary gives levels.
@@ -232,9 +226,14 @@ export function renderIncomeStatement(element: Element) {
 
     // Liquid position: checking minus card balances. Paying a card from
     // checking is liquid-neutral, so this delta is usually near zero.
-    const afterBuysLevel = operatingEnd + investmentSales - investmentBuys;
-    const liquidEnd = afterBuysLevel - mortgagePaydown;
-    const pureCheckingEnd = liquidEnd - ccPaydown;
+    // Order: dip further negative first — every way we "pay ourselves with
+    // assets" (buys, mortgage principal) — then the Vanguard sales that
+    // balance the budget close the section. Card paydown does NOT appear as
+    // a bar: in the liquid frame (checking − cards) it's an internal
+    // transfer; its per-card audit lives in the checkpoint tooltip.
+    const afterBuys = operatingEnd - investmentBuys;
+    const afterMortgage = afterBuys - mortgagePaydown;
+    const liquidEnd = afterMortgage + investmentSales;
     const liquidDelta = liquidEnd - operatingStart;
 
     const liquidBreakdown: Record<string, number> = { ...checkingBreakdown };
@@ -299,9 +298,6 @@ export function renderIncomeStatement(element: Element) {
     const afterIncome = operatingStart + operatingIncome;
     const afterExpenses = afterIncome - operatingExpenses;
     const afterCourtney = afterExpenses + netCourtney;
-    const afterSales = operatingEnd + investmentSales;
-    const afterBuys = afterSales - investmentBuys;
-    const afterMortgage = afterBuys - mortgagePaydown;
     const afterVestwell = operatingEnd + vestwellContributions;
     const afterDividends = afterVestwell + dividendIncome;
     const afterMarket = afterDividends + marketGains;
@@ -367,22 +363,11 @@ export function renderIncomeStatement(element: Element) {
         multiplier: 1
       },
       // --- Cash <-> asset swaps: money that really moved through checking
-      // or the cards, connected with assets. ---
-      {
-        label: "Investment Sales → Cash",
-        start: operatingEnd,
-        end: afterSales,
-        color: COLORS.income,
-        value: investmentSales,
-        breakdown: _.pickBy(
-          assetsMap,
-          (v, k) => !isChecking(k) && !isVestwell(k) && !isOptionsAsset(k) && v < 0
-        ),
-        multiplier: -1
-      },
+      // or the cards, connected with assets. Uses first (paying ourselves
+      // with assets), then the sales that balance the budget. ---
       {
         label: "Cash → Investments & Assets",
-        start: afterSales,
+        start: operatingEnd,
         end: afterBuys,
         color: COLORS.expenses,
         value: -investmentBuys,
@@ -402,18 +387,21 @@ export function renderIncomeStatement(element: Element) {
         multiplier: -1
       },
       {
-        label: "Credit Card Paydown (Float)",
+        label: "Investment Sales → Cash",
         start: afterMortgage,
-        end: pureCheckingEnd,
-        color: COLORS.liabilities,
-        value: -ccPaydown,
-        breakdown: _.pickBy(statement.liabilities, (v, k) => isCreditCard(k)),
+        end: liquidEnd,
+        color: COLORS.income,
+        value: investmentSales,
+        breakdown: _.pickBy(
+          assetsMap,
+          (v, k) => !isChecking(k) && !isVestwell(k) && !isOptionsAsset(k) && v < 0
+        ),
         multiplier: -1
       },
       {
         label: "🏁 Liquid Delta (Checking − Cards)",
         start: operatingStart,
-        end: afterMortgage,
+        end: liquidEnd,
         color: COLORS.assets,
         value: liquidDelta,
         breakdown: liquidBreakdown,
@@ -510,11 +498,10 @@ export function renderIncomeStatement(element: Element) {
       { label: "Courtney's Business (Net)", value: afterExpenses, anchor: "end" },
       { label: "Rental Income (Net)", value: afterCourtney, anchor: "end" },
       { label: "🏁 Operating Cash Flow", value: operatingEnd, anchor: "end" },
-      { label: "Investment Sales → Cash", value: operatingEnd, anchor: "end" },
-      { label: "Cash → Investments & Assets", value: afterSales, anchor: "end" },
+      { label: "Cash → Investments & Assets", value: operatingEnd, anchor: "end" },
       { label: "Mortgage Principal Paydown", value: afterBuys, anchor: "end" },
-      { label: "Credit Card Paydown (Float)", value: afterMortgage, anchor: "end" },
-      { label: "🏁 Liquid Delta (Checking − Cards)", value: afterMortgage, anchor: "end" },
+      { label: "Investment Sales → Cash", value: afterMortgage, anchor: "end" },
+      { label: "🏁 Liquid Delta (Checking − Cards)", value: liquidEnd, anchor: "end" },
       { label: "Operating Cash Flow (carried)", value: operatingStart, anchor: "start" },
       { label: "Vestwell Contributions (Payroll)", value: operatingEnd, anchor: "end" },
       { label: "Dividends (Reinvested)", value: afterVestwell, anchor: "end" },
@@ -539,10 +526,9 @@ export function renderIncomeStatement(element: Element) {
         afterExpenses,
         afterCourtney,
         operatingEnd,
-        afterSales,
         afterBuys,
         afterMortgage,
-        pureCheckingEnd,
+        liquidEnd,
         afterVestwell,
         afterDividends,
         afterMarket,
@@ -588,7 +574,7 @@ export function renderIncomeStatement(element: Element) {
     };
     drawDivider(
       "🏁 Operating Cash Flow",
-      "Investment Sales → Cash",
+      "Cash → Investments & Assets",
       "▲ OPERATING — did income cover daily life?",
       "▼ CASH ↔ ASSETS — selling & buying assets to keep checking + cards stable"
     );
@@ -660,9 +646,22 @@ export function renderIncomeStatement(element: Element) {
           return tooltip(rows, { header: d.label, total: formatCurrency(d.value) });
         }
 
-        // Card-by-card audit: balance before -> after (owed amounts shown
-        // positive), top movers first.
-        if (d.label === "Credit Card Paydown (Float)" && !_.isEmpty(ccLevels)) {
+        // Liquid checkpoint: checking deltas plus a card-by-card audit —
+        // balance before -> after (owed shown positive), top movers first.
+        if (d.label === "🏁 Liquid Delta (Checking − Cards)") {
+          const rows = _.chain(checkingBreakdown)
+            .toPairs()
+            .filter(([, v]) => Math.abs(v) > 0.01)
+            .sortBy(([, v]) => -Math.abs(v))
+            .map(
+              ([k, v]) =>
+                [
+                  iconify(k),
+                  [formatCurrency(v), "has-text-right has-text-weight-bold"]
+                ] as Array<string | string[]>
+            )
+            .value();
+
           const byIssuer: Record<string, { start: number; end: number }> = {};
           for (const [k, lvl] of Object.entries(ccLevels)) {
             const issuer = firstNames(k, 3);
@@ -671,32 +670,30 @@ export function renderIncomeStatement(element: Element) {
             agg.end += lvl.end;
             byIssuer[issuer] = agg;
           }
-          const rows = _.chain(byIssuer)
-            .toPairs()
-            .filter(([, lvl]) => Math.abs(lvl.end - lvl.start) > 0.01)
-            .sortBy(([, lvl]) => -Math.abs(lvl.end - lvl.start))
-            .take(4)
-            .map(([issuer, lvl]) => {
-              const owedStart = Math.abs(lvl.start);
-              const owedEnd = Math.abs(lvl.end);
-              const dir = owedEnd < owedStart ? "▼ down to" : "▲ up to";
-              return [
-                `💳 ${_.last(issuer.split(":"))} ${formatCurrency(owedStart)} ${dir} ${formatCurrency(owedEnd)}`,
-                [
-                  formatCurrency((lvl.end - lvl.start) * d.multiplier),
-                  "has-text-right has-text-weight-bold"
-                ]
-              ] as Array<string | string[]>;
-            })
-            .value();
+          for (const [issuer, lvl] of _.sortBy(
+            Object.entries(byIssuer),
+            ([, lvl]) => -Math.abs(lvl.end - lvl.start)
+          ).slice(0, 4)) {
+            if (Math.abs(lvl.end - lvl.start) < 0.01) continue;
+            const owedStart = Math.abs(lvl.start);
+            const owedEnd = Math.abs(lvl.end);
+            const dir = owedEnd < owedStart ? "▼ down to" : "▲ up to";
+            rows.push([
+              `💳 ${_.last(issuer.split(":"))} ${formatCurrency(owedStart)} ${dir} ${formatCurrency(owedEnd)}`,
+              [formatCurrency(lvl.end - lvl.start), "has-text-right has-text-weight-bold"]
+            ]);
+          }
 
-          rows.push([
-            [
-              `<div style="max-width: 22rem; white-space: normal;" class="has-text-grey">Cash spent shrinking card balances beyond new charges — debt going down is good. The 🏁 bar below nets this back against checking.</div>`,
-              "",
-              "2"
-            ]
-          ]);
+          const description = BAR_DESCRIPTIONS[d.label];
+          if (description) {
+            rows.push([
+              [
+                `<div style="max-width: 22rem; white-space: normal;" class="has-text-grey">${description}</div>`,
+                "",
+                "2"
+              ]
+            ]);
+          }
 
           return tooltip(rows, { header: d.label, total: formatCurrency(d.value) });
         }

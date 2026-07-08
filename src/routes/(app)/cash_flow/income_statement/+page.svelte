@@ -18,7 +18,11 @@
 
   let svg: Element;
   let incomeStatement: IncomeStatement;
-  let renderer: (data: IncomeStatement, months?: IncomeStatement[]) => void;
+  let renderer: (
+    data: IncomeStatement,
+    months?: IncomeStatement[],
+    allMonths?: IncomeStatement[]
+  ) => void;
   let yearly: Record<string, IncomeStatement> = {};
   let monthly: Record<string, IncomeStatement> = {};
   let diff: number;
@@ -118,7 +122,11 @@
           : monthKeys.filter((k) => k.startsWith(`${$year}-`))
       ).map((k) => monthly[k]);
 
-      renderer(incomeStatement, monthsInView);
+      renderer(
+        incomeStatement,
+        monthsInView,
+        monthKeys.map((k) => monthly[k])
+      );
       isEmpty = false;
     }
   }

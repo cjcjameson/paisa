@@ -75,7 +75,11 @@ export function renderIncomeStatement(element: Element) {
     });
 
   let firstRender = true;
-  return function (statement: IncomeStatement, months?: IncomeStatement[]) {
+  return function (
+    statement: IncomeStatement,
+    months?: IncomeStatement[],
+    allMonths?: IncomeStatement[]
+  ) {
     // Helper to sum properties matching a filter/regex
     const sumMatching = (obj: Record<string, number>, filter: (k: string) => boolean) => {
       let total = 0;
@@ -100,24 +104,24 @@ export function renderIncomeStatement(element: Element) {
       Math.abs(sumMatching(statement.tax, isPropertyTax));
     const netRental = grossRental - rentalExpenses; // Positive if income > expenses, negative if expenses > income
 
-    // Operating Income (excluding rental and dividends)
-    const isOperatingIncome = (acct: string) => !isRentalIncome(acct) && !isDividend(acct);
-    const grossOperatingIncome = Math.abs(sumMatching(statement.income, isOperatingIncome) + sumMatching(statement.interest, isOperatingIncome));
+    // Vestwell contributions are payroll-withheld (the importer books them
+    // Income:Salary:VestwellWithheld -> Assets:Vestwell); the cash never
+    // touched checking, so they're excluded from operating income and get
+    // their own net-worth bar below the line.
+    const isVestwellIncome = (acct: string) =>
+      acct.toLowerCase().startsWith("income:salary:vestwell");
+    const isVestwell = (acct: string) => acct.toLowerCase().startsWith("assets:vestwell");
+    const vestwellContributions = Math.abs(sumMatching(statement.income, isVestwellIncome));
+
+    // Operating Income (excluding rental, dividends and payroll withholding)
+    const isOperatingIncome = (acct: string) =>
+      !isRentalIncome(acct) && !isDividend(acct) && !isVestwellIncome(acct);
+    const operatingIncome = Math.abs(
+      sumMatching(statement.income, isOperatingIncome) +
+        sumMatching(statement.interest, isOperatingIncome)
+    );
 
     const assetsMap = (statement as any).assets || {};
-
-    // Vestwell contributions are payroll-withheld (booked Income:Salary ->
-    // Assets:Vestwell); the cash never touched checking, so they come OUT of
-    // operating income here and reappear as their own net-worth bar below the
-    // line. (Caveat: the 2024-04 401k rollover into Vestwell also lands in
-    // this delta; it predates payroll tracking, so only 2024 windows see it.)
-    const isVestwell = (acct: string) => acct.toLowerCase().startsWith("assets:vestwell");
-    let vestwellContributions = 0;
-    for (const [acct, val] of Object.entries(assetsMap)) {
-      if (isVestwell(acct) && (val as number) > 0) vestwellContributions += val as number;
-    }
-
-    const operatingIncome = grossOperatingIncome - vestwellContributions;
 
     // Operating Expenses (excluding rental expenses and mortgage interest, but including
     // non-property taxes; property tax nets against rental above)
@@ -180,12 +184,44 @@ export function renderIncomeStatement(element: Element) {
 
     // Credit-card float: expenses are booked at charge time, so the extra
     // cash that leaves checking is the debt DECREASE (paydown beyond new
-    // charges). Positive = debt shrank = cash out.
+    // charges). Positive = debt shrank = cash out — but net worth-wise a
+    // good thing; the liquid checkpoint nets it back.
     const ccPaydown = sumMatching(statement.liabilities, isCreditCard);
 
-    // Checking Cash Delta calculations
-    const checkingEnd = operatingEnd + investmentSales - investmentBuys - mortgagePaydown - ccPaydown;
-    const checkingDelta = checkingEnd - operatingStart;
+    // Card balance levels (before/after) for the tooltip: liability postings
+    // sum to the account balance from inception (openings included), so
+    // accumulating the monthly deltas up to the view boundary gives levels.
+    const ccLevels: Record<string, { start: number; end: number }> = {};
+    if (months && months.length > 0 && allMonths && allMonths.length > 0) {
+      const sortedView = _.sortBy(months, (m) => m.date);
+      const startDate = sortedView[0].date;
+      const endDate = _.last(sortedView).date;
+      const running: Record<string, number> = {};
+      let startSnap: Record<string, number> | null = null;
+      for (const m of _.sortBy(allMonths, (m) => m.date)) {
+        if (startSnap === null && m.date >= startDate) startSnap = { ...running };
+        if (m.date > endDate) break;
+        for (const [k, v] of Object.entries(m.liabilities || {})) {
+          if (isCreditCard(k)) running[k] = (running[k] || 0) + (v as number);
+        }
+      }
+      if (startSnap === null) startSnap = { ...running };
+      for (const k of _.union(_.keys(running), _.keys(startSnap))) {
+        ccLevels[k] = { start: startSnap[k] || 0, end: running[k] || 0 };
+      }
+    }
+
+    // Liquid position: checking minus card balances. Paying a card from
+    // checking is liquid-neutral, so this delta is usually near zero.
+    const afterBuysLevel = operatingEnd + investmentSales - investmentBuys;
+    const liquidEnd = afterBuysLevel - mortgagePaydown;
+    const pureCheckingEnd = liquidEnd - ccPaydown;
+    const liquidDelta = liquidEnd - operatingStart;
+
+    const liquidBreakdown: Record<string, number> = { ...checkingBreakdown };
+    for (const [k, v] of Object.entries(statement.liabilities)) {
+      if (isCreditCard(k)) liquidBreakdown[k] = v as number;
+    }
 
     // --- Section 3: pure net-worth accruals that never touched checking.
     const dividendIncome = Math.abs(sumMatching(statement.income, isDividend));
@@ -210,16 +246,10 @@ export function renderIncomeStatement(element: Element) {
     const t = svg.transition().duration(firstRender ? 0 : 750);
     firstRender = false;
 
-    // Income tooltip: show gross salary, then back out the Vestwell
-    // withholding that moved below the line.
     const incomeBreakdown: Record<string, number> = _.omitBy(
       { ...statement.income, ...statement.interest },
       (v, k) => !isOperatingIncome(k)
     );
-    if (vestwellContributions > 0) {
-      incomeBreakdown["Less: Vestwell payroll withholding (see net-worth section)"] =
-        vestwellContributions;
-    }
 
     // Chain checkpoints
     const afterIncome = operatingStart + operatingIncome;
@@ -306,19 +336,19 @@ export function renderIncomeStatement(element: Element) {
       {
         label: "Credit Card Paydown (Float)",
         start: afterMortgage,
-        end: checkingEnd,
+        end: pureCheckingEnd,
         color: COLORS.liabilities,
         value: -ccPaydown,
         breakdown: _.pickBy(statement.liabilities, (v, k) => isCreditCard(k)),
         multiplier: -1
       },
       {
-        label: "🏁 Checking Delta",
+        label: "🏁 Liquid Delta (Checking − Cards)",
         start: operatingStart,
-        end: checkingEnd,
+        end: afterMortgage,
         color: COLORS.assets,
-        value: checkingDelta,
-        breakdown: checkingBreakdown,
+        value: liquidDelta,
+        breakdown: liquidBreakdown,
         multiplier: 1
       },
       // --- NET WORTH group: restarts from the period-start balance. The
@@ -339,8 +369,8 @@ export function renderIncomeStatement(element: Element) {
         end: afterVestwell,
         color: COLORS.income,
         value: vestwellContributions,
-        breakdown: _.pickBy(assetsMap, (v, k) => isVestwell(k)),
-        multiplier: 1
+        breakdown: _.pickBy(statement.income, (v, k) => isVestwellIncome(k)),
+        multiplier: -1
       },
       {
         label: "Options Vested",
@@ -406,7 +436,7 @@ export function renderIncomeStatement(element: Element) {
       { label: "Cash → Investments & Assets", value: afterSales, anchor: "end" },
       { label: "Mortgage Principal Paydown", value: afterBuys, anchor: "end" },
       { label: "Credit Card Paydown (Float)", value: afterMortgage, anchor: "end" },
-      { label: "🏁 Checking Delta", value: checkingEnd, anchor: "end" },
+      { label: "🏁 Liquid Delta (Checking − Cards)", value: afterMortgage, anchor: "end" },
       { label: "Operating Cash Flow (carried)", value: operatingStart, anchor: "start" },
       { label: "Vestwell Contributions (Payroll)", value: operatingEnd, anchor: "end" },
       { label: "Options Vested", value: afterVestwell, anchor: "end" },
@@ -432,7 +462,7 @@ export function renderIncomeStatement(element: Element) {
         afterSales,
         afterBuys,
         afterMortgage,
-        checkingEnd,
+        pureCheckingEnd,
         afterVestwell,
         afterOptions,
         afterDividends,
@@ -448,7 +478,7 @@ export function renderIncomeStatement(element: Element) {
     // (bars 9-12), which restarts its own waterfall from the period start.
     gdivider.selectAll("*").remove();
     const dividerY =
-      (y("🏁 Checking Delta") + y.bandwidth() + y("Operating Cash Flow (carried)")) / 2;
+      (y("🏁 Liquid Delta (Checking − Cards)") + y.bandwidth() + y("Operating Cash Flow (carried)")) / 2;
     gdivider
       .append("line")
       .attr("class", "svg-grey")
@@ -485,8 +515,8 @@ export function renderIncomeStatement(element: Element) {
     const BAR_DESCRIPTIONS: Record<string, string> = {
       "🏁 Operating Cash Flow":
         "Operating income + net rental − operating expenses (the three bars above, netted). Did day-to-day cash cover the period?",
-      "🏁 Checking Delta":
-        "Operating cash flow + investment sales − investment buys − mortgage principal − card paydown: the change in checking balances over the period.",
+      "🏁 Liquid Delta (Checking − Cards)":
+        "Change in net liquid position: checking balances minus card balances. Usually near zero — negative means new pending card charges or less cash on hand; positive means cards paid off or cash built up. (Paying a card from checking doesn't move this number.)",
       "Operating Cash Flow (carried)":
         "The same operating cash flow from the group above, restated as the first step of the net-worth walk. The cash↔asset swaps above the line are net-worth-neutral, so they don't appear here.",
       "Vestwell Contributions (Payroll)":
@@ -530,6 +560,47 @@ export function renderIncomeStatement(element: Element) {
           return tooltip(rows, { header: d.label, total: formatCurrency(d.value) });
         }
 
+        // Card-by-card audit: balance before -> after (owed amounts shown
+        // positive), top movers first.
+        if (d.label === "Credit Card Paydown (Float)" && !_.isEmpty(ccLevels)) {
+          const byIssuer: Record<string, { start: number; end: number }> = {};
+          for (const [k, lvl] of Object.entries(ccLevels)) {
+            const issuer = firstNames(k, 3);
+            const agg = byIssuer[issuer] || { start: 0, end: 0 };
+            agg.start += lvl.start;
+            agg.end += lvl.end;
+            byIssuer[issuer] = agg;
+          }
+          const rows = _.chain(byIssuer)
+            .toPairs()
+            .filter(([, lvl]) => Math.abs(lvl.end - lvl.start) > 0.01)
+            .sortBy(([, lvl]) => -Math.abs(lvl.end - lvl.start))
+            .take(4)
+            .map(([issuer, lvl]) => {
+              const owedStart = Math.abs(lvl.start);
+              const owedEnd = Math.abs(lvl.end);
+              const dir = owedEnd < owedStart ? "▼ down to" : "▲ up to";
+              return [
+                `💳 ${_.last(issuer.split(":"))} ${formatCurrency(owedStart)} ${dir} ${formatCurrency(owedEnd)}`,
+                [
+                  formatCurrency((lvl.end - lvl.start) * d.multiplier),
+                  "has-text-right has-text-weight-bold"
+                ]
+              ] as Array<string | string[]>;
+            })
+            .value();
+
+          rows.push([
+            [
+              `<div style="max-width: 22rem; white-space: normal;" class="has-text-grey">Cash spent shrinking card balances beyond new charges — debt going down is good. The 🏁 bar below nets this back against checking.</div>`,
+              "",
+              "2"
+            ]
+          ]);
+
+          return tooltip(rows, { header: d.label, total: formatCurrency(d.value) });
+        }
+
         // Other/Adjustments = -(equity postings) exactly: untracked transfers,
         // historical plugs, and accounts entering tracking mid-period.
         if (d.label === "Other / Adjustments") {
@@ -567,8 +638,9 @@ export function renderIncomeStatement(element: Element) {
           )
           .value();
 
+        const description = BAR_DESCRIPTIONS[d.label];
+
         if (_.isEmpty(entries)) {
-          const description = BAR_DESCRIPTIONS[d.label];
           if (description) {
             return tooltip([
               [[d.label, "has-text-weight-bold has-text-centered", "2"]],
@@ -579,6 +651,14 @@ export function renderIncomeStatement(element: Element) {
               ]
             ]);
           }
+        } else if (description) {
+          entries.push([
+            [
+              `<div style="max-width: 22rem; white-space: normal;" class="has-text-grey">${description}</div>`,
+              "",
+              "2"
+            ]
+          ]);
         }
 
         return tooltip(entries, { header: d.label, total: formatCurrency(d.value) });

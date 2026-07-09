@@ -353,7 +353,7 @@ export function renderIncomeStatement(element: Element) {
           ..._.mapKeys(
             _.pickBy(statement.expenses, (v, k) => isRentalExpense(k)),
             (v, k) =>
-              k === "Expenses:Housing:Mortgage" ? "Mortgage Interest + Escrow (principal below)" : k
+              k === "Expenses:Housing:Mortgage" ? "Mortgage Interest (principal below)" : k
           ),
           ..._.pickBy(statement.tax, (v, k) => isPropertyTax(k))
         },
@@ -619,7 +619,7 @@ export function renderIncomeStatement(element: Element) {
         "Retirement savings withheld from the paycheck before it reached checking — excluded from operating income above, counted here as new net worth.",
       "Courtney's Business (Net)":
         "Courtney's business income net of business expenses (the WF business account and her cards). Negative expense lines are card credits/refunds.",
-      "Rental Income (Net)": `The mortgage line here is interest + escrow only. The principal portion (${formatCurrency(mortgagePaydown)}) appears as its own Mortgage Principal Paydown bar in the cash↔asset section — same payments, split in two, not double-counted.`,
+      "Rental Income (Net)": `The mortgage line here is the interest portion only. The principal portion (${formatCurrency(mortgagePaydown)}) appears as its own Mortgage Principal Paydown bar in the cash↔asset section — same payments, split in two, not double-counted.`,
       "Options Vested":
         "NEW startup options/shares that vested during the period, valued at their price on arrival (Parabola at 10¢). No cash moved — they simply appeared in net worth. Later repricing shows under Appreciation / Depreciation.",
       "Appreciation / Depreciation (Marks)":

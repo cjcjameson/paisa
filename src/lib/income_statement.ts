@@ -13,7 +13,7 @@ import { iconGlyph, iconify } from "./icon";
 import { pathArrows } from "d3-path-arrows";
 
 export function renderIncomeStatement(element: Element) {
-  const BARS = 17;
+  const BARS = 18;
   const BAR_HEIGHT = 45;
 
   const svg = d3.select(element),
@@ -146,9 +146,13 @@ export function renderIncomeStatement(element: Element) {
       Math.abs(sumMatching(statement.expenses, isOperatingExpense)) +
       Math.abs(sumMatching(statement.tax, (k) => !isPropertyTax(k)));
 
-    // Operating cash flows
+    // Operating cash flows. Rental is NOT part of operating: the user thinks
+    // of the rentals as an asset position, so all rental cash (rent in,
+    // expenses out, the FULL mortgage check out) lives in the cash↔asset
+    // section, and the principal slice is handed back in the net-worth
+    // section as "we paid ourselves".
     const operatingStart = statement.startingBalance;
-    const operatingCashFlow = operatingIncome - operatingExpenses + netCourtney + netRental;
+    const operatingCashFlow = operatingIncome - operatingExpenses + netCourtney;
     const operatingEnd = operatingStart + operatingCashFlow;
 
     // --- Section 2: cash <-> asset swaps that really moved through checking
@@ -183,6 +187,11 @@ export function renderIncomeStatement(element: Element) {
     // Mortgage Principal Paydown
     const isMortgageAccount = (acct: string) => acct.toLowerCase().startsWith("liabilities:mortgages:");
     const mortgagePaydown = Math.abs(sumMatching(statement.liabilities, isMortgageAccount));
+
+    // Rental, CASH view: rent received minus rental expenses minus the FULL
+    // mortgage checks. netRental already nets out interest (the ledger
+    // reclasses principal to the liability), so cash = netRental − principal.
+    const rentalNetCash = netRental - mortgagePaydown;
 
     // Per-payment texture from the monthly buckets: count payments per
     // mortgage and the min/max principal portion, for the tooltip.
@@ -232,8 +241,8 @@ export function renderIncomeStatement(element: Element) {
     // a bar: in the liquid frame (checking − cards) it's an internal
     // transfer; its per-card audit lives in the checkpoint tooltip.
     const afterBuys = operatingEnd - investmentBuys;
-    const afterMortgage = afterBuys - mortgagePaydown;
-    const liquidEnd = afterMortgage + investmentSales;
+    const afterRentalCash = afterBuys + rentalNetCash;
+    const liquidEnd = afterRentalCash + investmentSales;
 
     const liquidBreakdown: Record<string, number> = { ...checkingBreakdown };
     for (const [k, v] of Object.entries(statement.liabilities)) {
@@ -276,6 +285,8 @@ export function renderIncomeStatement(element: Element) {
     const junk =
       totalChange -
       (operatingCashFlow +
+        rentalNetCash +
+        mortgagePaydown +
         vestwellContributions +
         dividendIncome +
         marketGains +
@@ -303,8 +314,10 @@ export function renderIncomeStatement(element: Element) {
     // Chain checkpoints
     const afterIncome = operatingStart + operatingIncome;
     const afterExpenses = afterIncome - operatingExpenses;
-    const afterCourtney = afterExpenses + netCourtney;
-    const afterVestwell = operatingEnd + vestwellContributions;
+    const afterCourtney = afterExpenses + netCourtney; // == operatingEnd
+    const afterRentalCarried = operatingEnd + rentalNetCash;
+    const afterPrincipalBack = afterRentalCarried + mortgagePaydown;
+    const afterVestwell = afterPrincipalBack + vestwellContributions;
     const afterDividends = afterVestwell + dividendIncome;
     const afterMarket = afterDividends + marketGains;
     const afterOptions = afterMarket + optionsVested;
@@ -343,23 +356,6 @@ export function renderIncomeStatement(element: Element) {
         multiplier: -1
       },
       {
-        label: "Rental Income (Net)",
-        start: afterCourtney,
-        end: operatingEnd,
-        color: COLORS.primary,
-        value: netRental,
-        breakdown: {
-          ..._.pickBy(statement.income, (v, k) => isRentalIncome(k)),
-          ..._.mapKeys(
-            _.pickBy(statement.expenses, (v, k) => isRentalExpense(k)),
-            (v, k) =>
-              k === "Expenses:Housing:Mortgage" ? "Mortgage Interest (principal below)" : k
-          ),
-          ..._.pickBy(statement.tax, (v, k) => isPropertyTax(k))
-        },
-        multiplier: -1
-      },
-      {
         label: "🏁 Operating Cash Flow",
         start: operatingStart,
         end: operatingEnd,
@@ -384,17 +380,28 @@ export function renderIncomeStatement(element: Element) {
         multiplier: 1
       },
       {
-        label: "Mortgage Principal Paydown",
+        label: "Rental (Net Cash)",
         start: afterBuys,
-        end: afterMortgage,
-        color: COLORS.liabilities,
-        value: -mortgagePaydown,
-        breakdown: _.pickBy(statement.liabilities, (v, k) => isMortgageAccount(k)),
+        end: afterRentalCash,
+        color: COLORS.primary,
+        value: rentalNetCash,
+        breakdown: {
+          ..._.pickBy(statement.income, (v, k) => isRentalIncome(k)),
+          ..._.mapKeys(
+            _.pickBy(statement.expenses, (v, k) => isRentalExpense(k)),
+            (v, k) => (k === "Expenses:Housing:Mortgage" ? "Mortgage Interest" : k)
+          ),
+          ..._.mapKeys(
+            _.pickBy(statement.liabilities, (v, k) => isMortgageAccount(k)),
+            (v, k) => `Mortgage Principal:${_.last(k.split(":"))}`
+          ),
+          ..._.pickBy(statement.tax, (v, k) => isPropertyTax(k))
+        },
         multiplier: -1
       },
       {
         label: "Investment Sales → Cash",
-        start: afterMortgage,
+        start: afterRentalCash,
         end: liquidEnd,
         color: COLORS.income,
         value: investmentSales,
@@ -426,8 +433,26 @@ export function renderIncomeStatement(element: Element) {
         multiplier: 1
       },
       {
-        label: "Vestwell Contributions (Payroll)",
+        label: "Rental Cash Flow (carried)",
         start: operatingEnd,
+        end: afterRentalCarried,
+        color: COLORS.primary,
+        value: rentalNetCash,
+        breakdown: {},
+        multiplier: 1
+      },
+      {
+        label: "Principal (Paid to Ourselves)",
+        start: afterRentalCarried,
+        end: afterPrincipalBack,
+        color: COLORS.liabilities,
+        value: mortgagePaydown,
+        breakdown: _.pickBy(statement.liabilities, (v, k) => isMortgageAccount(k)),
+        multiplier: 1
+      },
+      {
+        label: "Vestwell Contributions (Payroll)",
+        start: afterPrincipalBack,
         end: afterVestwell,
         color: COLORS.income,
         value: vestwellContributions,
@@ -502,18 +527,19 @@ export function renderIncomeStatement(element: Element) {
       { label: "Income (Operating)", value: operatingStart, anchor: "start", icon: "fa6-solid:caret-down" },
       { label: "Expenses (Operating)", value: afterIncome, anchor: "end" },
       { label: "Courtney's Business (Net)", value: afterExpenses, anchor: "end" },
-      { label: "Rental Income (Net)", value: afterCourtney, anchor: "end" },
       { label: "🏁 Operating Cash Flow", value: operatingEnd, anchor: "end" },
       { label: "Cash → Investments & Assets", value: operatingEnd, anchor: "end" },
-      { label: "Mortgage Principal Paydown", value: afterBuys, anchor: "end" },
-      { label: "Investment Sales → Cash", value: afterMortgage, anchor: "end" },
+      { label: "Rental (Net Cash)", value: afterBuys, anchor: "end" },
+      { label: "Investment Sales → Cash", value: afterRentalCash, anchor: "end" },
       {
         label: "🏁 Liquid Delta (Checking − Cards)",
         value: operatingStart + liquidDelta,
         anchor: "end"
       },
       { label: "Operating Cash Flow (carried)", value: operatingStart, anchor: "start" },
-      { label: "Vestwell Contributions (Payroll)", value: operatingEnd, anchor: "end" },
+      { label: "Rental Cash Flow (carried)", value: operatingEnd, anchor: "end" },
+      { label: "Principal (Paid to Ourselves)", value: afterRentalCarried, anchor: "end" },
+      { label: "Vestwell Contributions (Payroll)", value: afterPrincipalBack, anchor: "end" },
       { label: "Dividends (Reinvested)", value: afterVestwell, anchor: "end" },
       { label: "Market Gains & Growth", value: afterDividends, anchor: "end" },
       { label: "Options Vested", value: afterMarket, anchor: "end" },
@@ -537,9 +563,11 @@ export function renderIncomeStatement(element: Element) {
         afterCourtney,
         operatingEnd,
         afterBuys,
-        afterMortgage,
+        afterRentalCash,
         liquidEnd,
         operatingStart + liquidDelta,
+        afterRentalCarried,
+        afterPrincipalBack,
         afterVestwell,
         afterDividends,
         afterMarket,
@@ -605,7 +633,7 @@ export function renderIncomeStatement(element: Element) {
     // of showing an empty tooltip.
     const BAR_DESCRIPTIONS: Record<string, string> = {
       "🏁 Operating Cash Flow":
-        "Operating income + net rental − operating expenses (the three bars above, netted). Did day-to-day cash cover the period?",
+        "Operating income − operating expenses + Courtney's business (the bars above, netted). Rental is deliberately NOT here — it lives in the cash↔asset section below as its own cash flow. Did day-to-day cash cover the period?",
       "🏁 Liquid Delta (Checking − Cards)": `Actual change in net liquid position: checking balances minus card balances. Usually near zero — negative means new pending card charges or less cash on hand; positive means cards paid off or cash built up.${
         Math.abs(nonCashGap) > 1
           ? ` The section bars above land ${formatCurrency(nonCashGap)} away because asset book values also move without cash — reinvested dividends, margin, card rewards.`
@@ -619,7 +647,11 @@ export function renderIncomeStatement(element: Element) {
         "Retirement savings withheld from the paycheck before it reached checking — excluded from operating income above, counted here as new net worth.",
       "Courtney's Business (Net)":
         "Courtney's business income net of business expenses (the WF business account and her cards). Negative expense lines are card credits/refunds.",
-      "Rental Income (Net)": `The mortgage line here is the interest portion only. The principal portion (${formatCurrency(mortgagePaydown)}) appears as its own Mortgage Principal Paydown bar in the cash↔asset section — same payments, split in two, not double-counted.`,
+      "Rental (Net Cash)": `The rentals from the cash side: rent received minus rental expenses minus the FULL mortgage checks (interest + principal). The principal slice (${formatCurrency(mortgagePaydown)}) wasn't lost — it became home equity, handed back below as Principal (Paid to Ourselves).`,
+      "Rental Cash Flow (carried)":
+        "The same rental net cash from the group above, restated as a step of the net-worth walk.",
+      "Principal (Paid to Ourselves)":
+        "The principal slice of the mortgage payments. It left checking (counted in the rental cash bar) but became equity in the properties — money we paid ourselves, not an expense.",
       "Options Vested":
         "NEW startup options/shares that vested during the period, valued at their price on arrival (Parabola at 10¢). No cash moved — they simply appeared in net worth. Later repricing shows under Appreciation / Depreciation.",
       "Appreciation / Depreciation (Marks)":
@@ -634,7 +666,7 @@ export function renderIncomeStatement(element: Element) {
       // Rental nets several Expenses:Housing/Tax subaccounts; show 3 levels
       // there so "Expenses:Housing:Mortgage" isn't mistaken for home rent.
       const groupDepth =
-        d.label === "Rental Income (Net)" || d.label === "Courtney's Business (Net)" ? 3 : 2;
+        d.label === "Rental (Net Cash)" || d.label === "Courtney's Business (Net)" ? 3 : 2;
       const secondLevelBreakdown = _.chain(d.breakdown)
           .toPairs()
           .groupBy((pair) => firstNames(pair[0], groupDepth))
@@ -643,7 +675,7 @@ export function renderIncomeStatement(element: Element) {
           .value();
 
         // Per-payment texture: "N payments, principal X–Y each".
-        if (d.label === "Mortgage Principal Paydown" && !_.isEmpty(mortgageDetail)) {
+        if (d.label === "Principal (Paid to Ourselves)" && !_.isEmpty(mortgageDetail)) {
           const rows = _.chain(mortgageDetail)
             .toPairs()
             .sortBy(([, dtl]) => -dtl.total)

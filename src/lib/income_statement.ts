@@ -220,6 +220,17 @@ export function renderIncomeStatement(element: Element) {
       }
     }
 
+    // Reinvested dividends are NOT cash purchases: they land inside the very
+    // account that generated them (Vanguard, HSA), inflating its book value
+    // without a dollar leaving checking. Back them out of the buys bar so the
+    // cash walk lands on the checkpoint. Aggregate subtraction keeps the walk
+    // total exactly right; only the buys/sales split is approximate for
+    // dividends earned inside a net-selling account. (Dividends still appear
+    // once, below the line, as their own net-worth bar.)
+    const dividendIncome = Math.abs(sumMatching(statement.income, isDividend));
+    const reinvestedDividends = Math.min(dividendIncome, investmentBuys);
+    investmentBuys -= reinvestedDividends;
+
     // Mortgage Principal Paydown
     const isMortgageAccount = (acct: string) => acct.toLowerCase().startsWith("liabilities:mortgages:");
     const mortgagePaydown = Math.abs(sumMatching(statement.liabilities, isMortgageAccount));
@@ -293,7 +304,6 @@ export function renderIncomeStatement(element: Element) {
     const nonCashGap = liquidDelta - (liquidEnd - operatingStart);
 
     // --- Section 3: pure net-worth accruals that never touched checking.
-    const dividendIncome = Math.abs(sumMatching(statement.income, isDividend));
     // Options Vested = NEW units arriving during the period. Paisa values a
     // no-cost vest posting at its market price on arrival, so the vest value
     // lives in the asset delta (counter: Equity:OpeningBalance), not in pnl.
@@ -409,10 +419,15 @@ export function renderIncomeStatement(element: Element) {
         end: afterBuys,
         color: COLORS.expenses,
         value: -investmentBuys,
-        breakdown: _.pickBy(
-          assetsMap,
-          (v, k) => !isChecking(k) && !isVestwell(k) && !isOptionsAsset(k) && v > 0
-        ),
+        breakdown: {
+          ..._.pickBy(
+            assetsMap,
+            (v, k) => !isChecking(k) && !isVestwell(k) && !isOptionsAsset(k) && v > 0
+          ),
+          ...(reinvestedDividends > 0.01
+            ? { "Less: Reinvested Dividends (no cash moved)": -reinvestedDividends }
+            : {})
+        },
         multiplier: 1
       },
       {
@@ -559,6 +574,28 @@ export function renderIncomeStatement(element: Element) {
       icon?: string;
     }
 
+    // Rough x-extent of the chart, for deciding when two dashed labels are
+    // far enough apart to both be legible.
+    const chartCandidates = [
+      operatingStart,
+      afterIncome,
+      afterExpenses,
+      operatingEnd,
+      afterBuys,
+      afterRentalCash,
+      liquidEnd,
+      operatingStart + liquidDelta,
+      afterRentalCarried,
+      afterPrincipalBack,
+      afterVestwell,
+      afterDividends,
+      afterMarket,
+      afterOptions,
+      afterMarks,
+      statement.endingBalance
+    ];
+    const chartSpan = Math.max(...chartCandidates) - Math.min(...chartCandidates);
+
     const lines: Line[] = [
       { label: "Income (Operating)", value: operatingStart, anchor: "start", icon: "fa6-solid:caret-down" },
       { label: "Expenses (Operating)", value: afterIncome, anchor: "end" },
@@ -567,6 +604,13 @@ export function renderIncomeStatement(element: Element) {
       { label: "Cash → Investments & Assets", value: operatingEnd, anchor: "end" },
       { label: "Rental (Net Cash)", value: afterBuys, anchor: "end" },
       { label: "Investment Sales → Cash", value: afterRentalCash, anchor: "end" },
+      // Where the WALK lands (right edge of the sales bar). The checkpoint
+      // line beside it is the ACTUAL balance change; if they visibly diverge,
+      // the distance between the dashes IS the remaining non-cash gap
+      // (margin, card rewards). Skipped when the labels would collide.
+      ...(Math.abs(nonCashGap) > chartSpan * 0.05
+        ? [{ label: "🏁 Liquid Delta (Checking − Cards)", value: liquidEnd, anchor: "end" }]
+        : []),
       {
         label: "🏁 Liquid Delta (Checking − Cards)",
         value: operatingStart + liquidDelta,
@@ -676,7 +720,7 @@ export function renderIncomeStatement(element: Element) {
           : ""
       }`,
       "Cash → Investments & Assets":
-        "Asset purchases funded from cash — plus some book-value increases that did NOT use cash: reinvested dividends inside Vanguard/HSA, card-reward deposits into Robinhood, margin. The 🏁 bar below reports actual balances.",
+        "Asset purchases funded from cash. Reinvested dividends are backed out (they stay inside the account that earned them — no cash moved; they appear once, below the line). Small non-cash book moves may remain: card-reward deposits, margin.",
       "Operating Cash Flow (carried)":
         "The same operating cash flow from the group above, restated as the first step of the net-worth walk. The cash↔asset swaps above the line are net-worth-neutral, so they don't appear here.",
       "Vestwell Contributions (Payroll)":

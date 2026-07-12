@@ -40,9 +40,38 @@
     return _.filter(t.postings, (p) => p.amount >= 0);
   };
 
+  // Sorting. "amount" = the transaction's size (sum of its positive legs).
+  type SortKey = "date" | "payee" | "amount";
+  let sortKey: SortKey = "date";
+  let sortAsc = false;
+  const txnAmount = (t: T) => _.sumBy(credits(t), (p) => p.amount);
+  const SORTERS: Record<SortKey, (t: T) => any> = {
+    date: (t) => t.date.valueOf(),
+    payee: (t) => t.payee.toLowerCase(),
+    amount: txnAmount
+  };
+
+  const SORT_OPTIONS: Array<[SortKey, string]> = [
+    ["date", "Date"],
+    ["payee", "Payee"],
+    ["amount", "Amount"]
+  ];
+
+  function sortBy(key: SortKey) {
+    if (sortKey === key) {
+      sortAsc = !sortAsc;
+    } else {
+      sortKey = key;
+      sortAsc = key === "payee"; // text reads A→Z; date/amount start big-first
+    }
+  }
+
   function handleInputRaw(predicate: (t: T) => boolean) {
     filtered = _.filter(transactions, predicate);
   }
+
+  let displayed: T[] = [];
+  $: displayed = _.orderBy(filtered, [SORTERS[sortKey]], [sortAsc ? "asc" : "desc"]);
 
   const handleInput = _.debounce(handleInputRaw, 100);
 
@@ -97,7 +126,7 @@
   const mobile = isMobile();
 
   const itemSize = (i: number) => {
-    const t = filtered[i];
+    const t = displayed[i];
     const count = mobile ? t.postings.length : Math.max(credits(t).length, debits(t).length);
     return 8 + count * 22 + (mobile ? 25 : 0);
   };
@@ -301,14 +330,30 @@
       <div class="columns">
         <div class="column is-12">
           <div class="box">
+            <div class="sort-header is-size-7 has-text-grey mb-1">
+              <span>sort:</span>
+              {#each SORT_OPTIONS as [key, label] (key)}
+                <button
+                  class="button is-small {sortKey === key ? 'is-link is-light' : 'is-white'}"
+                  on:click={() => sortBy(key)}
+                >
+                  {label}
+                  {#if sortKey === key}
+                    <span class="icon is-small"
+                      ><i class="fas fa-caret-{sortAsc ? 'up' : 'down'}"></i></span
+                    >
+                  {/if}
+                </button>
+              {/each}
+            </div>
             <VirtualList
               width="100%"
-              height={window.innerHeight - 150}
-              itemCount={filtered.length}
+              height={window.innerHeight - 180}
+              itemCount={displayed.length}
               {itemSize}
             >
               <div slot="item" let:index let:style {style}>
-                {@const t = filtered[index]}
+                {@const t = displayed[index]}
                 <Transaction {t} />
               </div>
             </VirtualList>
@@ -318,3 +363,11 @@
     </div>
   </section>
 {/if}
+
+<style>
+  .sort-header {
+    display: flex;
+    align-items: center;
+    gap: 0.4rem;
+  }
+</style>

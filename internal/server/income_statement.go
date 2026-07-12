@@ -24,6 +24,7 @@ type IncomeStatement struct {
 	Equity          map[string]decimal.Decimal `json:"equity"`
 	Pnl             map[string]decimal.Decimal `json:"pnl"`
 	Assets          map[string]decimal.Decimal `json:"assets"`
+	AssetsNonCash   map[string]decimal.Decimal `json:"assets_noncash"`
 	Liabilities     map[string]decimal.Decimal `json:"liabilities"`
 	Tax             map[string]decimal.Decimal `json:"tax"`
 	Expenses        map[string]decimal.Decimal `json:"expenses"`
@@ -34,15 +35,42 @@ type RunningBalance struct {
 	quantity map[string]decimal.Decimal
 }
 
+// A transaction "moved cash" if any of its legs touched a liquid account
+// (checking or a credit card) — or an Equity:Transfers:* bucket, which is by
+// convention one half of a two-transaction inter-account cash movement (e.g.
+// a Vanguard sale whose matching deposit into Schwab is a separate
+// transaction). Asset deltas inside such transactions are real cash
+// buys/sells; asset deltas in transactions with NO cash-connected leg are
+// book moves — dividend reinvestments, payroll contributions, vests, opening
+// balances — and belong in AssetsNonCash so the cash-flow walk can ignore
+// them at the source. (Internal transfers between two investment accounts
+// also ride Equity:Transfers, so they count as a symmetric buy+sell; they
+// cancel in the walk.)
+func isCashConnected(account string) bool {
+	return strings.HasPrefix(account, "Assets:Checking") ||
+		strings.HasPrefix(account, "Liabilities:CreditCards") ||
+		strings.HasPrefix(account, "Liabilities:Credit_Cards") ||
+		strings.HasPrefix(account, "Liabilities:Courtney:BusinessCard") ||
+		strings.HasPrefix(account, "Equity:Transfers")
+}
+
 func GetIncomeStatement(db *gorm.DB) gin.H {
 	postings := query.Init(db).All()
-	yearly := computeStatement(db, utils.GroupByFY(postings), func(fy string) (time.Time, time.Time) {
+
+	liquidTxns := make(map[string]bool)
+	for _, p := range postings {
+		if isCashConnected(p.Account) {
+			liquidTxns[p.TransactionID] = true
+		}
+	}
+
+	yearly := computeStatement(db, liquidTxns, utils.GroupByFY(postings), func(fy string) (time.Time, time.Time) {
 		return utils.ParseFY(fy)
 	})
 	// Monthly buckets ("2006-01" keys) let the frontend aggregate any
 	// contiguous 1-12 month range; startingBalance chains across months the
 	// same way it chains across years.
-	monthly := computeStatement(db, utils.GroupByMonth(postings), func(month string) (time.Time, time.Time) {
+	monthly := computeStatement(db, liquidTxns, utils.GroupByMonth(postings), func(month string) (time.Time, time.Time) {
 		start, err := time.Parse("2006-01", month)
 		if err != nil {
 			return time.Time{}, time.Time{}
@@ -52,7 +80,7 @@ func GetIncomeStatement(db *gorm.DB) gin.H {
 	return gin.H{"yearly": yearly, "monthly": monthly}
 }
 
-func computeStatement(db *gorm.DB, grouped map[string][]posting.Posting, bounds func(key string) (time.Time, time.Time)) map[string]IncomeStatement {
+func computeStatement(db *gorm.DB, liquidTxns map[string]bool, grouped map[string][]posting.Posting, bounds func(key string) (time.Time, time.Time)) map[string]IncomeStatement {
 	statements := make(map[string]IncomeStatement)
 
 	fys := lo.Keys(grouped)
@@ -71,6 +99,7 @@ func computeStatement(db *gorm.DB, grouped map[string][]posting.Posting, bounds 
 		incomeStatement.Equity = make(map[string]decimal.Decimal)
 		incomeStatement.Pnl = make(map[string]decimal.Decimal)
 		incomeStatement.Assets = make(map[string]decimal.Decimal)
+		incomeStatement.AssetsNonCash = make(map[string]decimal.Decimal)
 		incomeStatement.Liabilities = make(map[string]decimal.Decimal)
 		incomeStatement.Tax = make(map[string]decimal.Decimal)
 		incomeStatement.Expenses = make(map[string]decimal.Decimal)
@@ -113,7 +142,11 @@ func computeStatement(db *gorm.DB, grouped map[string][]posting.Posting, bounds 
 				r.quantity[p.Commodity] = r.quantity[p.Commodity].Add(p.Quantity)
 				runnings[p.Account] = r
 
-				incomeStatement.Assets[p.Account] = incomeStatement.Assets[p.Account].Add(p.Amount)
+				if isCashConnected(p.Account) || liquidTxns[p.TransactionID] {
+					incomeStatement.Assets[p.Account] = incomeStatement.Assets[p.Account].Add(p.Amount)
+				} else {
+					incomeStatement.AssetsNonCash[p.Account] = incomeStatement.AssetsNonCash[p.Account].Add(p.Amount)
+				}
 			default:
 				// ignore
 			}

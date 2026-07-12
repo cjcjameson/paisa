@@ -173,7 +173,12 @@ export function renderIncomeStatement(element: Element) {
         sumMatching(statement.interest, isOperatingIncome)
     );
 
+    // Backend splits asset deltas at the source: `assets` = deltas from
+    // transactions that touched checking/cards (real cash buys/sells);
+    // `assets_noncash` = book moves (dividend reinvestments, payroll
+    // contributions, vests, openings, transfers between investment accounts).
     const assetsMap = (statement as any).assets || {};
+    const assetsNonCash = (statement as any).assets_noncash || {};
 
     // Operating Expenses (excluding rental and Courtney business expenses,
     // but including non-property taxes; property tax nets against rental)
@@ -220,16 +225,9 @@ export function renderIncomeStatement(element: Element) {
       }
     }
 
-    // Reinvested dividends are NOT cash purchases: they land inside the very
-    // account that generated them (Vanguard, HSA), inflating its book value
-    // without a dollar leaving checking. Back them out of the buys bar so the
-    // cash walk lands on the checkpoint. Aggregate subtraction keeps the walk
-    // total exactly right; only the buys/sales split is approximate for
-    // dividends earned inside a net-selling account. (Dividends still appear
-    // once, below the line, as their own net-worth bar.)
+    // (No dividend back-out needed here: the backend's assets map is already
+    // cash-only, so reinvested dividends never enter the buys bar.)
     const dividendIncome = Math.abs(sumMatching(statement.income, isDividend));
-    const reinvestedDividends = Math.min(dividendIncome, investmentBuys);
-    investmentBuys -= reinvestedDividends;
 
     // Mortgage Principal Paydown
     const isMortgageAccount = (acct: string) => acct.toLowerCase().startsWith("liabilities:mortgages:");
@@ -309,8 +307,10 @@ export function renderIncomeStatement(element: Element) {
     // lives in the asset delta (counter: Equity:OpeningBalance), not in pnl.
     const isOptions = (acct: string) => acct.toLowerCase().startsWith("assets:options");
     let optionsVested = 0;
-    for (const [acct, val] of Object.entries(assetsMap)) {
-      if (isOptions(acct) && (val as number) > 0) optionsVested += val as number;
+    for (const m of [assetsMap, assetsNonCash]) {
+      for (const [acct, val] of Object.entries(m)) {
+        if (isOptions(acct) && (val as number) > 0) optionsVested += val as number;
+      }
     }
     // Manual marks: properties, the Bronco, and illiquid options/shares —
     // price changes set by hand in prices.journal, not by a market feed.
@@ -419,15 +419,10 @@ export function renderIncomeStatement(element: Element) {
         end: afterBuys,
         color: COLORS.expenses,
         value: -investmentBuys,
-        breakdown: {
-          ..._.pickBy(
-            assetsMap,
-            (v, k) => !isChecking(k) && !isVestwell(k) && !isOptionsAsset(k) && v > 0
-          ),
-          ...(reinvestedDividends > 0.01
-            ? { "Less: Reinvested Dividends (no cash moved)": -reinvestedDividends }
-            : {})
-        },
+        breakdown: _.pickBy(
+          assetsMap,
+          (v, k) => !isChecking(k) && !isVestwell(k) && !isOptionsAsset(k) && v > 0
+        ),
         multiplier: 1
       },
       {
@@ -720,7 +715,7 @@ export function renderIncomeStatement(element: Element) {
           : ""
       }`,
       "Cash → Investments & Assets":
-        "Asset purchases funded from cash. Reinvested dividends are backed out (they stay inside the account that earned them — no cash moved; they appear once, below the line). Small non-cash book moves may remain: card-reward deposits, margin.",
+        "Asset purchases actually funded from checking/cards. Book-only increases (reinvested dividends, payroll contributions, vests) are classified out at the source — a transaction only lands here if cash really moved.",
       "Operating Cash Flow (carried)":
         "The same operating cash flow from the group above, restated as the first step of the net-worth walk. The cash↔asset swaps above the line are net-worth-neutral, so they don't appear here.",
       "Vestwell Contributions (Payroll)":

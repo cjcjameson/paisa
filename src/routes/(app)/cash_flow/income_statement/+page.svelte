@@ -43,6 +43,7 @@
     "equity",
     "pnl",
     "assets",
+    "assets_noncash",
     "liabilities",
     "tax",
     "expenses"

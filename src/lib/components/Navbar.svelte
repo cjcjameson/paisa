@@ -47,6 +47,9 @@
     recurringIcons?: boolean;
     children?: Link[];
     disablePreload?: boolean;
+    // Child href is a full path, not appended to the parent's href (lets one
+    // dropdown mix /assets/* and /liabilities/* pages).
+    absolute?: boolean;
   }
   const links: Link[] = [
     { label: "Dashboard", href: "/", hide: true },
@@ -55,20 +58,10 @@
       href: "/cash_flow",
       children: [
         { label: "Income Statement", href: "/income_statement", financialYearPicker: true },
-        { label: "Monthly", href: "/monthly", dateRangeSelector: true },
-        {
-          label: "Yearly",
-          href: "/yearly",
-          financialYearPicker: true,
-          maxDepthSelector: true
-        },
-        {
-          label: "Recurring",
-          href: "/recurring",
-          help: "recurring",
-          monthPicker: true,
-          recurringIcons: true
-        }
+        // /income is a top-level route; shown here as "Monthly Income".
+        { label: "Monthly Income", href: "/income", absolute: true }
+        // Archived from the nav 2026-07-12, still routable: /cash_flow/monthly,
+        // /cash_flow/yearly, /cash_flow/recurring.
       ]
     },
     {
@@ -76,39 +69,29 @@
       href: "/expense",
       children: [
         { label: "Monthly", href: "/monthly", monthPicker: true, dateRangeSelector: true },
-        { label: "Yearly", href: "/yearly", financialYearPicker: true },
-        { label: "Budget", href: "/budget", help: "budget", monthPicker: true }
+        { label: "Yearly", href: "/yearly", financialYearPicker: true }
+        // Budget archived from the nav 2026-07-12 (page still routable at /expense/budget)
       ]
     },
+    // Combined balance-sheet menu (2026-07-12). Archived from the nav but
+    // still routable: /assets/investment, /assets/gain, /assets/analysis,
+    // /liabilities/credit_cards, /liabilities/repayment, /liabilities/interest.
     {
-      label: "Assets",
+      label: "Balance Sheet",
       href: "/assets",
       children: [
-        { label: "Balance", href: "/balance" },
-        { label: "Networth", href: "/networth", dateRangeSelector: true },
-        { label: "Investment", href: "/investment" },
-        { label: "Gain", href: "/gain" },
-        { label: "Allocation", href: "/allocation", help: "allocation-targets" },
-        { label: "Analysis", href: "/analysis", tag: "alpha", help: "analysis" }
+        { label: "Assets Balance", href: "/balance" },
+        { label: "Liabilities Balance", href: "/liabilities/balance", absolute: true },
+        { label: "Net Worth", href: "/networth", dateRangeSelector: true },
+        { label: "Allocation", href: "/allocation", help: "allocation-targets" }
       ]
     },
-    {
-      label: "Liabilities",
-      href: "/liabilities",
-      children: [
-        { label: "Balance", href: "/balance" },
-        { label: "Credit Cards", href: "/credit_cards", help: "credit-cards" },
-        { label: "Repayment", href: "/repayment" },
-        { label: "Interest", href: "/interest" }
-      ]
-    },
-    { label: "Income", href: "/income" },
     {
       label: "Ledger",
       href: "/ledger",
       children: [
-        { label: "Import", href: "/import", help: "import" },
-        { label: "Editor", href: "/editor", help: "editor", disablePreload: true },
+        // Import & Editor removed from the nav 2026-07-12; pages still live at
+        // /ledger/import and /ledger/editor for deep links.
         { label: "Transactions", href: "/transaction", help: "bulk-edit" },
         { label: "Postings", href: "/posting" },
         { label: "Price", href: "/price" }
@@ -159,27 +142,35 @@
   $: if (normalizedPath) {
     selectedSubLink = null;
     selectedSubSubLink = null;
+    const subHref = (parent: Link, l: Link) => (l.absolute ? l.href : parent.href + l.href);
     selectedLink = _.find(links, (l) => normalizedPath == l.href);
     if (!selectedLink) {
       selectedLink = _.find(
         links,
-        (l) => !_.isEmpty(l.children) && normalizedPath.startsWith(l.href)
+        (l) =>
+          !_.isEmpty(l.children) &&
+          (normalizedPath.startsWith(l.href) ||
+            _.some(l.children, (c) => c.absolute && normalizedPath.startsWith(c.href)))
       );
 
-      selectedSubLink = _.find(
-        selectedLink.children,
-        (l) => normalizedPath == selectedLink.href + l.href
-      );
-
-      if (!selectedSubLink) {
-        selectedSubLink = _.find(selectedLink.children, (l) =>
-          normalizedPath.startsWith(selectedLink.href + l.href)
+      // Archived pages (no nav entry) can still be visited directly; nothing
+      // matches then, so guard every level.
+      if (selectedLink) {
+        selectedSubLink = _.find(
+          selectedLink.children,
+          (l) => normalizedPath == subHref(selectedLink, l)
         );
 
-        if (!_.isEmpty(selectedSubLink.children)) {
-          selectedSubSubLink = _.find(selectedSubLink.children, (l) =>
-            normalizedPath.startsWith(selectedLink.href + selectedSubLink.href + l.href)
+        if (!selectedSubLink) {
+          selectedSubLink = _.find(selectedLink.children, (l) =>
+            normalizedPath.startsWith(subHref(selectedLink, l))
           );
+
+          if (selectedSubLink && !_.isEmpty(selectedSubLink.children)) {
+            selectedSubSubLink = _.find(selectedSubLink.children, (l) =>
+              normalizedPath.startsWith(subHref(selectedLink, selectedSubLink) + l.href)
+            );
+          }
         }
       }
     }
@@ -240,7 +231,7 @@
             >
             <div class="navbar-dropdown {!isMobile() && 'is-boxed'}">
               {#each link.children as sublink}
-                {@const href = link.href + sublink.href}
+                {@const href = sublink.absolute ? sublink.href : link.href + sublink.href}
                 {#if _.isEmpty(sublink.children)}
                   <a
                     class="navbar-item"

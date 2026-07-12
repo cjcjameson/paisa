@@ -112,11 +112,15 @@ export function renderIncomeStatement(element: Element) {
     // Michigan property taxes are a rental cost (Jul+Dec lumps), not household tax.
     const isPropertyTax = (acct: string) => acct.toLowerCase().startsWith("expenses:tax:property");
 
-    // Keep all intermediate amounts as POSITIVE numbers:
-    const grossRental = Math.abs(sumMatching(statement.income, isRentalIncome));
+    // Sign convention: paisa reports income NEGATIVE, expenses/tax POSITIVE.
+    // Negate income sums (don't Math.abs them!) so a net-negative group — e.g.
+    // a year where tax refunds exceed payments — keeps its true sign instead
+    // of being flipped into a fake expense (2025: household tax netted to
+    // −3,213, and abs() turned that refund into a +3,213 cost, a 6,426 error).
+    const grossRental = -sumMatching(statement.income, isRentalIncome);
     const rentalExpenses =
-      Math.abs(sumMatching(statement.expenses, isRentalExpense)) +
-      Math.abs(sumMatching(statement.tax, isPropertyTax));
+      sumMatching(statement.expenses, isRentalExpense) +
+      sumMatching(statement.tax, isPropertyTax);
     const netRental = grossRental - rentalExpenses; // Positive if income > expenses, negative if expenses > income
 
     // Courtney's business, netted like the rental: her income minus business
@@ -127,7 +131,7 @@ export function renderIncomeStatement(element: Element) {
       const l = acct.toLowerCase();
       return l.startsWith("expenses:business") && !l.startsWith("expenses:business:cj");
     };
-    const grossCourtney = Math.abs(sumMatching(statement.income, isCourtneyIncome));
+    const grossCourtney = -sumMatching(statement.income, isCourtneyIncome);
     const courtneyExpenses = sumMatching(statement.expenses, isCourtneyExpense);
     const netCourtney = grossCourtney - courtneyExpenses;
 
@@ -138,7 +142,7 @@ export function renderIncomeStatement(element: Element) {
     const isVestwellIncome = (acct: string) =>
       acct.toLowerCase().startsWith("income:salary:vestwell");
     const isVestwell = (acct: string) => acct.toLowerCase().startsWith("assets:vestwell");
-    const vestwellContributions = Math.abs(sumMatching(statement.income, isVestwellIncome));
+    const vestwellContributions = -sumMatching(statement.income, isVestwellIncome);
 
     // Operating Income (excluding rental, Courtney's business, dividends and
     // payroll withholding)
@@ -147,9 +151,9 @@ export function renderIncomeStatement(element: Element) {
       !isDividend(acct) &&
       !isVestwellIncome(acct) &&
       !isCourtneyIncome(acct);
-    const operatingIncome = Math.abs(
+    const operatingIncome = -(
       sumMatching(statement.income, isOperatingIncome) +
-        sumMatching(statement.interest, isOperatingIncome)
+      sumMatching(statement.interest, isOperatingIncome)
     );
 
     // Backend splits asset deltas at the source: `assets` = deltas from
@@ -163,8 +167,8 @@ export function renderIncomeStatement(element: Element) {
     // but including non-property taxes; property tax nets against rental)
     const isOperatingExpense = (acct: string) => !isRentalExpense(acct) && !isCourtneyExpense(acct);
     const operatingExpenses =
-      Math.abs(sumMatching(statement.expenses, isOperatingExpense)) +
-      Math.abs(sumMatching(statement.tax, (k) => !isPropertyTax(k)));
+      sumMatching(statement.expenses, isOperatingExpense) +
+      sumMatching(statement.tax, (k) => !isPropertyTax(k));
 
     // Operating cash flows. Rental is NOT part of operating: the user thinks
     // of the rentals as an asset position, so all rental cash (rent in,
@@ -206,7 +210,7 @@ export function renderIncomeStatement(element: Element) {
 
     // (No dividend back-out needed here: the backend's assets map is already
     // cash-only, so reinvested dividends never enter the buys bar.)
-    const dividendIncome = Math.abs(sumMatching(statement.income, isDividend));
+    const dividendIncome = -sumMatching(statement.income, isDividend);
 
     // Mortgage Principal Paydown
     const isMortgageAccount = (acct: string) => acct.toLowerCase().startsWith("liabilities:mortgages:");

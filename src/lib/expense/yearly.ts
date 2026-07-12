@@ -16,7 +16,7 @@ import {
   now,
   type Legend
 } from "$lib/utils";
-import COLORS, { generateColorScheme } from "$lib/colors";
+import COLORS, { expenseColorScheme, sortExpenseGroups } from "$lib/colors";
 import type { Writable } from "svelte/store";
 import { iconify } from "$lib/icon";
 import { byExpenseGroup, expenseGroup, pieData } from "$lib/expense";
@@ -170,7 +170,9 @@ export function renderYearlyExpensesTimeline(
     height = +svg.attr("height") - margin.top - margin.bottom,
     g = svg.append("g").attr("transform", "translate(" + margin.left + "," + margin.top + ")");
 
-  const groups = _.chain(postings).map(expenseGroup).uniq().sort().value();
+  // Same semantic palette + ordering as the monthly view, so a category keeps
+  // its color across both pages.
+  const groups = sortExpenseGroups(_.chain(postings).map(expenseGroup).uniq().value());
 
   const defaultValues = _.zipObject(
     groups,
@@ -214,7 +216,7 @@ export function renderYearlyExpensesTimeline(
   const x = d3.scaleBand().range([0, width]).paddingInner(0.1).paddingOuter(0);
   const y = d3.scaleLinear().range([height, 0]);
 
-  const z = generateColorScheme(groups);
+  const z = expenseColorScheme(groups);
 
   const tooltipContent = (allowedGroups: string[]) => {
     return (d: d3.SeriesPoint<Record<string, number>>) => {

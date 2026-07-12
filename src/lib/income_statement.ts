@@ -12,31 +12,10 @@ import _ from "lodash";
 import { iconGlyph, iconify } from "./icon";
 import { pathArrows } from "d3-path-arrows";
 import { goto } from "$app/navigation";
-
-// Drill-down: clicking a bar opens Ledger → Transactions pre-filtered to the
-// accounts that feed it (the query is visible and editable there — the point
-// is auditability). Computed bars (checkpoints, carried, pnl-derived) have no
-// posting-level source, so they get no clause and stay non-clickable. The
-// buys/sales pair shares one clause: the split is by sign of the balance
-// delta, which a posting filter can't express — the drill shows BOTH sides.
-const DRILL_CLAUSES: Record<string, string> = {
-  "Income (Operating)":
-    "account =~ /^Income:/ AND NOT account =~ /^Income:(Rental|Dividends|Salary:Vestwell|Business:Courtney)/",
-  "Expenses (Operating)":
-    "account =~ /^Expenses:/ AND NOT account =~ /^(Expenses:Rental|Expenses:Housing:Mortgage|Expenses:Tax:Property|Expenses:Business(?!:CJ))/",
-  "Courtney's Business (Net)":
-    "(account =~ /^Income:Business:Courtney/ OR (account =~ /^Expenses:Business/ AND NOT account =~ /^Expenses:Business:CJ/))",
-  "Rental (Net Cash)":
-    "account =~ /^(Income:Rental|Expenses:Rental|Expenses:Housing:Mortgage|Expenses:Tax:Property|Liabilities:Mortgages)/",
-  "Cash → Investments & Assets":
-    "account =~ /^Assets:/ AND NOT account =~ /^(Assets:Checking|Assets:Vestwell|Assets:Options)/",
-  "Investment Sales → Cash":
-    "account =~ /^Assets:/ AND NOT account =~ /^(Assets:Checking|Assets:Vestwell|Assets:Options)/",
-  "Principal (Paid to Ourselves)": "account =~ /^Liabilities:Mortgages:/",
-  "Vestwell Contributions (Payroll)": "account =~ /^Income:Salary:Vestwell/",
-  "Dividends (Reinvested)": "account =~ /^Income:Dividends/",
-  "Other / Adjustments": "account =~ /^Equity:/"
-};
+// Drill queries live in waterfall_rules.ts, DERIVED from the same account
+// prefixes the Go backend uses to classify cash vs book asset moves —
+// see the isomorphism contract there.
+import { DRILL_CLAUSES } from "./waterfall_rules";
 
 export function renderIncomeStatement(element: Element) {
   const BARS = 18;

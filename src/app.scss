@@ -18,6 +18,11 @@ $switch-focus: none;
 
 $yellow: $amber-500;
 
+// Bulma collapses the navbar into the burger below $navbar-breakpoint
+// (default $desktop = 1024px). The full menu fits well under that, so keep
+// the clickable top nav on narrower windows.
+$navbar-breakpoint: 800px;
+
 @import "bulma/sass/utilities/_all.sass";
 @import "@fortawesome/fontawesome-free/scss/fontawesome.scss";
 

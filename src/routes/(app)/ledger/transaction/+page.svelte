@@ -102,9 +102,18 @@
     return 8 + count * 22 + (mobile ? 25 : 0);
   };
 
+  // Bookkeeping noise, not money moving: importer balance assertions are
+  // all-zero-posting transactions, and the refresh script writes a "Sync
+  // Completed" freshness marker. Both clutter a browsing view — hide them.
+  // (They remain visible in the Editor and in hledger itself.)
+  const isBookkeeping = (t: T) =>
+    _.every(t.postings, (p) => Math.abs(p.amount) < 0.005) ||
+    _.some(t.postings, (p) => p.account.startsWith("Status:"));
+
   async function loadTransactions() {
     ({ files, accounts, commodities } = await ajax("/api/editor/files"));
     ({ transactions } = await ajax("/api/transaction"));
+    transactions = _.reject(transactions, isBookkeeping);
     handleInputRaw(get(editorState).predicate);
 
     newFiles = files;

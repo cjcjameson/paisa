@@ -308,11 +308,11 @@ export function renderMonthlyExpensesTimeline(
           .tickFormat(skipTicks(30, x, (d) => d.toString()))
       )
       .selectAll("text")
-      .attr("y", 10)
-      .attr("x", 0)
-      .attr("dy", ".71em")
-      .attr("transform", null)
-      .style("text-anchor", "middle");
+      .attr("y", 0)
+      .attr("x", 9)
+      .attr("dy", ".35em")
+      .attr("transform", "rotate(90)")
+      .style("text-anchor", "start");
 
     yAxis.transition(t).call(d3.axisLeft(y).tickSize(-width).tickFormat(formatCurrencyCrude));
 

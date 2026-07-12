@@ -21,7 +21,8 @@
   let renderer: (
     data: IncomeStatement,
     months?: IncomeStatement[],
-    allMonths?: IncomeStatement[]
+    allMonths?: IncomeStatement[],
+    drillRange?: { from: string; to: string }
   ) => void;
   let yearly: Record<string, IncomeStatement> = {};
   let monthly: Record<string, IncomeStatement> = {};
@@ -122,10 +123,20 @@
           : monthKeys.filter((k) => k.startsWith(`${$year}-`))
       ).map((k) => monthly[k]);
 
+      // Date window for bar drill-down (click → Ledger Transactions).
+      const endOfMonth = (ym: string) => {
+        const [yy, mm] = ym.split("-").map(Number);
+        return `${ym}-${String(new Date(yy, mm, 0).getDate()).padStart(2, "0")}`;
+      };
+      const drillRange = rangeMode
+        ? { from: `${fromMonth}-01`, to: endOfMonth(toMonth) }
+        : { from: `${$year}-01-01`, to: `${$year}-12-31` };
+
       renderer(
         incomeStatement,
         monthsInView,
-        monthKeys.map((k) => monthly[k])
+        monthKeys.map((k) => monthly[k]),
+        drillRange
       );
       isEmpty = false;
     }

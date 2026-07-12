@@ -11,6 +11,32 @@ import COLORS from "./colors";
 import _ from "lodash";
 import { iconGlyph, iconify } from "./icon";
 import { pathArrows } from "d3-path-arrows";
+import { goto } from "$app/navigation";
+
+// Drill-down: clicking a bar opens Ledger → Transactions pre-filtered to the
+// accounts that feed it (the query is visible and editable there — the point
+// is auditability). Computed bars (checkpoints, carried, pnl-derived) have no
+// posting-level source, so they get no clause and stay non-clickable. The
+// buys/sales pair shares one clause: the split is by sign of the balance
+// delta, which a posting filter can't express — the drill shows BOTH sides.
+const DRILL_CLAUSES: Record<string, string> = {
+  "Income (Operating)":
+    "account =~ /^Income:/ AND NOT account =~ /^Income:(Rental|Dividends|Salary:Vestwell|Business:Courtney)/",
+  "Expenses (Operating)":
+    "account =~ /^Expenses:/ AND NOT account =~ /^(Expenses:Rental|Expenses:Housing:Mortgage|Expenses:Tax:Property|Expenses:Business(?!:CJ))/",
+  "Courtney's Business (Net)":
+    "(account =~ /^Income:Business:Courtney/ OR (account =~ /^Expenses:Business/ AND NOT account =~ /^Expenses:Business:CJ/))",
+  "Rental (Net Cash)":
+    "account =~ /^(Income:Rental|Expenses:Rental|Expenses:Housing:Mortgage|Expenses:Tax:Property|Liabilities:Mortgages)/",
+  "Cash → Investments & Assets":
+    "account =~ /^Assets:/ AND NOT account =~ /^(Assets:Checking|Assets:Vestwell|Assets:Options)/",
+  "Investment Sales → Cash":
+    "account =~ /^Assets:/ AND NOT account =~ /^(Assets:Checking|Assets:Vestwell|Assets:Options)/",
+  "Principal (Paid to Ourselves)": "account =~ /^Liabilities:Mortgages:/",
+  "Vestwell Contributions (Payroll)": "account =~ /^Income:Salary:Vestwell/",
+  "Dividends (Reinvested)": "account =~ /^Income:Dividends/",
+  "Other / Adjustments": "account =~ /^Equity:/"
+};
 
 export function renderIncomeStatement(element: Element) {
   const BARS = 18;
@@ -78,8 +104,18 @@ export function renderIncomeStatement(element: Element) {
   return function (
     statement: IncomeStatement,
     months?: IncomeStatement[],
-    allMonths?: IncomeStatement[]
+    allMonths?: IncomeStatement[],
+    drillRange?: { from: string; to: string }
   ) {
+    // Query sent to Ledger → Transactions when a bar is clicked.
+    const drillQuery = (label: string): string | null => {
+      const clause = DRILL_CLAUSES[label];
+      if (!clause) return null;
+      const dates = drillRange
+        ? ` AND date >= [${drillRange.from}] AND date <= [${drillRange.to}]`
+        : "";
+      return `(${clause})${dates}`;
+    };
     // Helper to sum properties matching a filter/regex
     const sumMatching = (obj: Record<string, number>, filter: (k: string) => boolean) => {
       let total = 0;
@@ -662,6 +698,20 @@ export function renderIncomeStatement(element: Element) {
         "Ending net worth − starting net worth: operating cash flow + payroll contributions + options + dividends + market gains + adjustments, netted."
     };
 
+    // Appended to a drillable bar's tooltip so the affordance is discoverable.
+    const drillHintRow = (d: Bar): Array<Array<string | string[]>> =>
+      drillQuery(d.label)
+        ? [
+            [
+              [
+                `<div class="has-text-grey is-size-7">🔎 Click the bar to open these transactions in the ledger</div>`,
+                "",
+                "2"
+              ]
+            ]
+          ]
+        : [];
+
     const barTooltip = (d: Bar) => {
       // Rental nets several Expenses:Housing/Tax subaccounts; show 3 levels
       // there so "Expenses:Housing:Mortgage" isn't mistaken for home rent.
@@ -691,6 +741,7 @@ export function renderIncomeStatement(element: Element) {
             })
             .value();
 
+          rows.push(...drillHintRow(d));
           return tooltip(rows, { header: d.label, total: formatCurrency(d.value) });
         }
 
@@ -767,6 +818,7 @@ export function renderIncomeStatement(element: Element) {
             )
             .value();
 
+          rows.push(...drillHintRow(d));
           return tooltip(rows, { header: d.label, total: formatCurrency(d.value) });
         }
 
@@ -806,6 +858,7 @@ export function renderIncomeStatement(element: Element) {
           ]);
         }
 
+        entries.push(...drillHintRow(d));
         return tooltip(entries, { header: d.label, total: formatCurrency(d.value) });
       };
 
@@ -913,6 +966,17 @@ export function renderIncomeStatement(element: Element) {
       .join("rect")
       .attr("fill", "transparent")
       .attr("data-tippy-content", barTooltip)
+      .attr("cursor", (d) => (drillQuery(d.label) ? "pointer" : "default"))
+      .on("click", (_event, d) => {
+        const q = drillQuery(d.label);
+        if (q)
+          goto(
+            "/ledger/transaction?q=" +
+              encodeURIComponent(q) +
+              "&bar=" +
+              encodeURIComponent(d.label)
+          );
+      })
       .attr("x", (d) => {
         const x0 = Math.min(x(d.start), x(d.end));
         const w = Math.abs(x(d.end) - x(d.start));

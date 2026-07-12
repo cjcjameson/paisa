@@ -4,6 +4,8 @@
 
   let editorDom: HTMLElement;
   export let autocomplete: Record<string, string[]>;
+  // Seed the editor (e.g. from a ?q= URL param — waterfall bar drill-down).
+  export let initialQuery: string = "";
   let editor: EditorView;
 
   $: if (autocomplete && editorDom) {
@@ -11,7 +13,14 @@
       editor.destroy();
     }
 
-    editor = createEditor("", editorDom, autocomplete);
+    editor = createEditor(initialQuery, editorDom, autocomplete);
+  }
+
+  // Replace the editor's content programmatically (example chips, drills).
+  export function setQuery(query: string) {
+    if (!editor) return;
+    editor.dispatch({ changes: { from: 0, to: editor.state.doc.length, insert: query } });
+    editor.focus();
   }
 </script>
 

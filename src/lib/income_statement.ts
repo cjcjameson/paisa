@@ -18,7 +18,7 @@ import { goto } from "$app/navigation";
 import { DRILL_CLAUSES } from "./waterfall_rules";
 
 export function renderIncomeStatement(element: Element) {
-  const BARS = 18;
+  const BARS = 19;
   const BAR_HEIGHT = 45;
 
   const svg = d3.select(element),
@@ -163,12 +163,15 @@ export function renderIncomeStatement(element: Element) {
     const assetsMap = (statement as any).assets || {};
     const assetsNonCash = (statement as any).assets_noncash || {};
 
-    // Operating Expenses (excluding rental and Courtney business expenses,
-    // but including non-property taxes; property tax nets against rental)
+    // Operating Expenses (excluding rental and Courtney business expenses).
+    // Household income tax is NOT in here — it gets its own bar: it's neither
+    // income nor day-to-day spending, but it moves operating cash flow and
+    // can net NEGATIVE in a refund year, which deserves showing.
     const isOperatingExpense = (acct: string) => !isRentalExpense(acct) && !isCourtneyExpense(acct);
-    const operatingExpenses =
-      sumMatching(statement.expenses, isOperatingExpense) +
-      sumMatching(statement.tax, (k) => !isPropertyTax(k));
+    const operatingExpenses = sumMatching(statement.expenses, isOperatingExpense);
+    // Positive = net tax paid; negative = refunds exceeded payments.
+    // Property tax stays with the rentals.
+    const householdTax = sumMatching(statement.tax, (k) => !isPropertyTax(k));
 
     // Operating cash flows. Rental is NOT part of operating: the user thinks
     // of the rentals as an asset position, so all rental cash (rent in,
@@ -176,7 +179,7 @@ export function renderIncomeStatement(element: Element) {
     // section, and the principal slice is handed back in the net-worth
     // section as "we paid ourselves".
     const operatingStart = statement.startingBalance;
-    const operatingCashFlow = operatingIncome - operatingExpenses + netCourtney;
+    const operatingCashFlow = operatingIncome - operatingExpenses - householdTax + netCourtney;
     const operatingEnd = operatingStart + operatingCashFlow;
 
     // --- Section 2: cash <-> asset swaps that really moved through checking
@@ -343,7 +346,8 @@ export function renderIncomeStatement(element: Element) {
     // Chain checkpoints
     const afterIncome = operatingStart + operatingIncome;
     const afterExpenses = afterIncome - operatingExpenses;
-    const afterCourtney = afterExpenses + netCourtney; // == operatingEnd
+    const afterTax = afterExpenses - householdTax;
+    const afterCourtney = afterTax + netCourtney; // == operatingEnd
     const afterRentalCarried = operatingEnd + rentalNetCash;
     const afterPrincipalBack = afterRentalCarried + mortgagePaydown;
     const afterVestwell = afterPrincipalBack + vestwellContributions;
@@ -369,12 +373,21 @@ export function renderIncomeStatement(element: Element) {
         end: afterExpenses,
         color: COLORS.expenses,
         value: -operatingExpenses,
-        breakdown: _.omitBy({ ...statement.expenses, ...statement.tax }, (v, k) => !isOperatingExpense(k) || isPropertyTax(k)),
+        breakdown: _.omitBy(statement.expenses, (v, k) => !isOperatingExpense(k)),
+        multiplier: -1
+      },
+      {
+        label: "Income Tax (Net)",
+        start: afterExpenses,
+        end: afterTax,
+        color: COLORS.liabilities,
+        value: -householdTax,
+        breakdown: _.omitBy(statement.tax, (v, k) => isPropertyTax(k)),
         multiplier: -1
       },
       {
         label: "Courtney's Business (Net)",
-        start: afterExpenses,
+        start: afterTax,
         end: afterCourtney,
         color: COLORS.primary,
         value: netCourtney,
@@ -577,7 +590,8 @@ export function renderIncomeStatement(element: Element) {
     const lines: Line[] = [
       { label: "Income (Operating)", value: operatingStart, anchor: "start", icon: "fa6-solid:caret-down" },
       { label: "Expenses (Operating)", value: afterIncome, anchor: "end" },
-      { label: "Courtney's Business (Net)", value: afterExpenses, anchor: "end" },
+      { label: "Income Tax (Net)", value: afterExpenses, anchor: "end" },
+      { label: "Courtney's Business (Net)", value: afterTax, anchor: "end" },
       { label: "🏁 Operating Cash Flow", value: operatingEnd, anchor: "end" },
       { label: "Cash → Investments & Assets", value: operatingEnd, anchor: "end" },
       { label: "Rental (Net Cash)", value: afterBuys, anchor: "end" },
@@ -618,6 +632,7 @@ export function renderIncomeStatement(element: Element) {
         operatingStart,
         afterIncome,
         afterExpenses,
+        afterTax,
         afterCourtney,
         operatingEnd,
         afterBuys,
@@ -691,7 +706,7 @@ export function renderIncomeStatement(element: Element) {
     // of showing an empty tooltip.
     const BAR_DESCRIPTIONS: Record<string, string> = {
       "🏁 Operating Cash Flow":
-        "Operating income − operating expenses + Courtney's business (the bars above, netted). Rental is deliberately NOT here — it lives in the cash↔asset section below as its own cash flow. Did day-to-day cash cover the period?",
+        "Operating income − operating expenses − net income tax + Courtney's business (the bars above, netted). Rental is deliberately NOT here — it lives in the cash↔asset section below as its own cash flow. Did day-to-day cash cover the period?",
       "🏁 Liquid Delta (Checking − Cards)": `Actual change in net liquid position: checking balances minus card balances. Usually near zero — negative means new pending card charges or less cash on hand; positive means cards paid off or cash built up.${
         Math.abs(nonCashGap) > 1
           ? ` The section bars above land ${formatCurrency(nonCashGap)} away because asset book values also move without cash — reinvested dividends, margin, card rewards.`

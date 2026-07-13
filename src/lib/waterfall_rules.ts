@@ -66,7 +66,8 @@ export const DRILL_CLAUSES: Record<string, string> = {
   "Income (Operating)":
     "account =~ /^Income:/ AND NOT account =~ /^Income:(Rental|Dividends|Salary:Vestwell|Business:Courtney)/",
   "Expenses (Operating)":
-    "account =~ /^Expenses:/ AND NOT account =~ /^(Expenses:Rental|Expenses:Housing:Mortgage|Expenses:Tax:Property|Expenses:Business(?!:CJ))/",
+    "account =~ /^Expenses:/ AND NOT account =~ /^(Expenses:Rental|Expenses:Housing:Mortgage|Expenses:Tax|Expenses:Business(?!:CJ))/",
+  "Income Tax (Net)": "account =~ /^Expenses:Tax:/ AND NOT account =~ /^Expenses:Tax:Property/",
   "Courtney's Business (Net)":
     "(account =~ /^Income:Business:Courtney/ OR (account =~ /^Expenses:Business/ AND NOT account =~ /^Expenses:Business:CJ/))",
   "Rental (Net Cash)":

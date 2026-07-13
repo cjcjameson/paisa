@@ -98,6 +98,18 @@ describe("bar ↔ drill isomorphism (buys/sales)", () => {
     expect(DRILL_CLAUSES["Other / Adjustments"]).toContain("(?!Transfers:)");
   });
 
+  test("Income Tax drill and Expenses drill partition household tax", () => {
+    // Household income tax has its own bar: the tax drill selects it, the
+    // operating-expenses drill must NOT, and property tax belongs to neither
+    // (it lives in the rental bar).
+    const taxClause = DRILL_CLAUSES["Income Tax (Net)"];
+    const expensesClause = DRILL_CLAUSES["Expenses (Operating)"];
+    expect(taxClause).toContain("Expenses:Tax:");
+    expect(taxClause).toContain("Expenses:Tax:Property");
+    expect(expensesClause).toContain("Expenses:Tax");
+    expect(DRILL_CLAUSES["Rental (Net Cash)"]).toContain("Expenses:Tax:Property");
+  });
+
   test("drill clause string embeds every cash-connected prefix", () => {
     // The query shown to the user must be built from the same prefix list the
     // backend uses — if the Go rule gains a prefix, this list must too, and

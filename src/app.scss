@@ -844,6 +844,27 @@ nav.level.grid-2 {
   @include desktop {
     width: 800px;
   }
+
+  // The single-line query gets a horizontal scrollbar when long; a classic
+  // (always-visible) scrollbar otherwise draws on top of the text. Slim it
+  // down and give the line room so the query stays readable.
+  .cm-scroller {
+    scrollbar-width: thin;
+    padding-bottom: 8px;
+
+    &::-webkit-scrollbar {
+      height: 6px;
+    }
+
+    &::-webkit-scrollbar-thumb {
+      background: $grey-lighter;
+      border-radius: 3px;
+    }
+
+    &::-webkit-scrollbar-track {
+      background: transparent;
+    }
+  }
 }
 
 .full-height {

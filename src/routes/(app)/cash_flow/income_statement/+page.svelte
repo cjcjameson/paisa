@@ -252,7 +252,7 @@
             {/if}
             <div class="ml-auto is-flex is-align-items-center whitespace-nowrap">
               <label class="checkbox is-size-7 mr-3">
-                <input type="checkbox" bind:checked={rangeMode} /> custom range
+                <input type="checkbox" bind:checked={rangeMode} /> custom range (inclusive)
               </label>
               {#if rangeMode}
                 <input

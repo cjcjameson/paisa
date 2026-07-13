@@ -1,6 +1,7 @@
 import { describe, expect, test } from "bun:test";
 import {
   buysSalesDrillMatches,
+  otherDrillMatches,
   txnIsCashConnected,
   CASH_CONNECTED_PREFIXES,
   DRILL_CLAUSES
@@ -81,6 +82,21 @@ describe("bar ↔ drill isomorphism (buys/sales)", () => {
       expect(buysSalesDrillMatches(t.accounts)).toBe(t.inDrill);
     });
   }
+
+  test("Other/Adjustments drill: openings in, matched transfer pairs out", () => {
+    // The bar sums ALL equity, but matched Equity:Transfers pairs net to zero
+    // inside it — the drill shows only equity that can net to something.
+    expect(
+      otherDrillMatches(["Assets:Investments:FidelityHSA", "Equity:OpeningBalance"])
+    ).toBe(true);
+    expect(
+      otherDrillMatches(["Equity:Transfers:Schwab", "Equity:Historical:InterAccount"])
+    ).toBe(true); // plugs stay visible even when paired with a transfer bucket
+    expect(otherDrillMatches(["Assets:Checking:Schwab:3391", "Equity:Transfers:Schwab"])).toBe(
+      false
+    );
+    expect(DRILL_CLAUSES["Other / Adjustments"]).toContain("(?!Transfers:)");
+  });
 
   test("drill clause string embeds every cash-connected prefix", () => {
     // The query shown to the user must be built from the same prefix list the

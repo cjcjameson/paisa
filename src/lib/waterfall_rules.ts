@@ -43,6 +43,19 @@ export const txnIsCashConnected = (accounts: string[]) =>
 export const buysSalesDrillMatches = (accounts: string[]) =>
   txnHasInvestmentAsset(accounts) && txnIsCashConnected(accounts);
 
+// The Other/Adjustments bar = −(sum of ALL equity postings). Matched transfer
+// pairs (both legs in the same Equity:Transfers:<name> bucket) net to zero
+// inside the bar, so showing them in the drill is pure noise — the drill
+// selects only the equity accounts that can actually net to something:
+// openings, historical plugs. CAVEAT: a ONE-SIDED transfer leg does move the
+// bar but is excluded here; those are ledger defects, caught by the
+// transfer-bucket sweep (`bal Equity:Transfers` ≈ 0, see RECONCILIATION_QC),
+// not by this view.
+const otherAdjustmentsPattern = "^Equity:(?!Transfers:)";
+export const otherAdjustmentsClause = `account =~ /${otherAdjustmentsPattern}/`;
+export const otherDrillMatches = (accounts: string[]) =>
+  accounts.some((a) => new RegExp(otherAdjustmentsPattern).test(a));
+
 // Drill-down: clicking a bar opens Ledger → Transactions pre-filtered to the
 // accounts that feed it (the query is visible and editable there — the point
 // is auditability). Computed bars (checkpoints, carried, pnl-derived) have no
@@ -63,5 +76,5 @@ export const DRILL_CLAUSES: Record<string, string> = {
   "Principal (Paid to Ourselves)": "account =~ /^Liabilities:Mortgages:/",
   "Vestwell Contributions (Payroll)": "account =~ /^Income:Salary:Vestwell/",
   "Dividends (Reinvested)": "account =~ /^Income:Dividends/",
-  "Other / Adjustments": "account =~ /^Equity:/"
+  "Other / Adjustments": otherAdjustmentsClause
 };

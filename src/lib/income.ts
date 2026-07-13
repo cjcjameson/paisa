@@ -15,14 +15,20 @@ import {
 } from "./utils";
 import { generateColorScheme } from "./colors";
 
-export function renderMonthlyInvestmentTimeline(incomes: Income[]): Legend[] {
-  return renderIncomeTimeline(incomes, "#d3-income-timeline", "MMM-YYYY");
+export function renderMonthlyInvestmentTimeline(incomes: Income[], only?: string): Legend[] {
+  return renderIncomeTimeline(incomes, "#d3-income-timeline", "MMM-YYYY", only);
 }
 
-function renderIncomeTimeline(incomes: Income[], id: string, timeFormat: string): Legend[] {
+function renderIncomeTimeline(
+  incomes: Income[],
+  id: string,
+  timeFormat: string,
+  only?: string
+): Legend[] {
   const MAX_BAR_WIDTH = 40;
-  const svg = d3.select(id),
-    margin = { top: 20, right: 30, bottom: 80, left: 40 },
+  const svg = d3.select(id);
+  svg.selectAll("*").remove();
+  const margin = { top: 20, right: 30, bottom: 80, left: 40 },
     width =
       document.getElementById(id.substring(1)).parentElement.clientWidth -
       margin.left -
@@ -31,11 +37,14 @@ function renderIncomeTimeline(incomes: Income[], id: string, timeFormat: string)
     g = svg.append("g").attr("transform", "translate(" + margin.left + "," + margin.top + ")");
 
   const postings = _.flatMap(incomes, (i) => i.postings);
+  // Colors and legends always come from the FULL group list so a category
+  // keeps its color when the chart is filtered down to just that category.
   const groupKeys = _.chain(postings)
     .map((p) => incomeGroup(p))
     .uniq()
     .sort()
     .value();
+  const activeKeys = only ? _.filter(groupKeys, (k) => k === only) : groupKeys;
 
   const groupTotal = _.chain(postings)
     .groupBy((p) => incomeGroup(p))
@@ -47,8 +56,8 @@ function renderIncomeTimeline(incomes: Income[], id: string, timeFormat: string)
     .value();
 
   const defaultValues = _.zipObject(
-    groupKeys,
-    _.map(groupKeys, () => 0)
+    activeKeys,
+    _.map(activeKeys, () => 0)
   );
 
   interface Point {
@@ -59,7 +68,8 @@ function renderIncomeTimeline(incomes: Income[], id: string, timeFormat: string)
   let points: Point[] = [];
 
   points = _.map(incomes, (i) => {
-    const values = _.chain(i.postings)
+    const visible = only ? _.filter(i.postings, (p) => incomeGroup(p) === only) : i.postings;
+    const values = _.chain(visible)
       .groupBy((p) => incomeGroup(p))
       .flatMap((postings, key) => [[key, _.sumBy(postings, (p) => -p.amount)]])
       .fromPairs()
@@ -69,7 +79,7 @@ function renderIncomeTimeline(incomes: Income[], id: string, timeFormat: string)
       {
         month: i.date.format(timeFormat),
         date: i.date,
-        postings: i.postings
+        postings: visible
       },
       defaultValues,
       values
@@ -82,7 +92,7 @@ function renderIncomeTimeline(incomes: Income[], id: string, timeFormat: string)
   const sum = (filter: (n: number) => boolean) => (p: Point) =>
     _.sum(
       _.filter(
-        _.map(groupKeys, (k) => p[k]),
+        _.map(activeKeys, (k) => p[k]),
         filter
       )
     );
@@ -123,7 +133,7 @@ function renderIncomeTimeline(incomes: Income[], id: string, timeFormat: string)
   g.append("g")
     .selectAll("g")
     .data(
-      d3.stack().offset(d3.stackOffsetDiverging).keys(groupKeys)(
+      d3.stack().offset(d3.stackOffsetDiverging).keys(activeKeys)(
         points as { [key: string]: number }[]
       )
     )
